@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>12x12 Backgammon-like Prototype</title>
+  <title>小雞棋</title>
   <style>
     :root{
       --cell: 56px;
@@ -16,7 +16,6 @@
       --text: #e5e7eb;
       --muted: #94a3b8;
       --accent: #38bdf8;
-      --warn: #fb7185;
     }
 
     body{
@@ -40,6 +39,13 @@
       box-shadow: 0 10px 30px rgba(0,0,0,.25);
     }
 
+    .title{
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: .5px;
+      margin-bottom: 10px;
+    }
+
     .row{
       display:flex; gap:10px; flex-wrap:wrap;
       align-items:center;
@@ -61,7 +67,28 @@
       color: var(--muted);
       line-height: 1.5;
       margin-top: 8px;
+      white-space: pre-wrap;
     }
+
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.04);
+      font-size: 12px;
+      color: var(--text);
+      font-weight: 800;
+    }
+    .dot{
+      width:10px; height:10px; border-radius:999px;
+      background:#94a3b8;
+      box-shadow: 0 0 0 3px rgba(148,163,184,0.15);
+    }
+    .dot.black{ background:#0b1220; box-shadow:0 0 0 3px rgba(11,18,32,0.35); }
+    .dot.white{ background:#e5e7eb; box-shadow:0 0 0 3px rgba(229,231,235,0.20); }
 
     .board{
       background: rgba(255,255,255,0.03);
@@ -132,13 +159,16 @@
   </div>
 
   <div class="panel">
+    <div class="title">小雞棋</div>
+
     <div class="row">
-      <span id="turnBadge">Turn</span>
+      <span id="turnBadge" class="badge"><span class="dot"></span><span id="turnText">回合</span></span>
     </div>
+
     <div class="row">
-      <button id="btnMove">Move</button>
       <button id="btnReset">Reset</button>
     </div>
+
     <div id="log" class="hint"></div>
   </div>
 </div>
@@ -152,19 +182,24 @@
 
   function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
+  // board[x][y] (1-indexed) -> 'B' | 'W' | null
   const board = Array.from({length: W+1}, ()=>Array(H+1).fill(null));
+
   const gridEl = document.getElementById('grid');
   const logEl = document.getElementById('log');
   const turnBadgeEl = document.getElementById('turnBadge');
+  const turnTextEl = document.getElementById('turnText');
 
   let turn='B';
   let selected=null;
   let group=null;
+  let isAnimating=false;
 
   function dirOf(c){ return c==='B'?1:-1; }
+  function otherOf(c){ return c==='B'?'W':'B'; }
 
   function log(msg){
-    logEl.textContent = msg;
+    logEl.textContent = msg || '';
   }
 
   function clearBoard(){
@@ -178,6 +213,12 @@
     const whites=[[12,1],[12,2],[12,3],[11,1],[11,2],[10,1]];
     blacks.forEach(([x,y])=>board[x][y]='B');
     whites.forEach(([x,y])=>board[x][y]='W');
+  }
+
+  function updateTurnUI(){
+    const dot = turnBadgeEl.querySelector('.dot');
+    dot.className = 'dot ' + (turn==='B'?'black':'white');
+    turnTextEl.textContent = `現在回合：${turn==='B'?'黑棋':'白棋'}`;
   }
 
   function render(){
@@ -205,9 +246,10 @@
         gridEl.appendChild(d);
       }
     }
-    turnBadgeEl.textContent = turn==='B'?'黑棋':'白棋';
+    updateTurnUI();
   }
 
+  // 群組：選定棋子 + 同欄上方所有棋子（不分顏色，直到遇到空格為止）
   function computeGroup(x,y){
     const moverColor=board[x][y];
     if(!moverColor) return null;
@@ -220,6 +262,7 @@
     return {x,ys,moverColor};
   }
 
+  // 移動量：依「所有上方棋子數」（不分顏色，且在同一堆疊直到遇空格）
   function countAllAbove(x,y){
     let c=0;
     for(let yy=y+1;yy<=H;yy++){
@@ -243,10 +286,13 @@
     return true;
   }
 
+  function belowOccupiedOrGroundAt(x, bottomY){
+    if(bottomY===1) return true;
+    return board[x][bottomY-1]!==null;
+  }
+
   function belowOccupiedOrGround(g){
-    const bottom=g.ys[0];
-    if(bottom===1) return true;
-    return board[g.x][bottom-1]!==null;
+    return belowOccupiedOrGroundAt(g.x, g.ys[0]);
   }
 
   function canMoveDown(g){
@@ -277,31 +323,98 @@
     return false;
   }
 
+  // 往前 1 格；若出界 => 移除群組並回報移除的黑/白數量（混色）
   function moveForward1(g){
     const nx=g.x+dirOf(g.moverColor);
+
+    // 出界：移除群組
     if(nx<1||nx>W){
-      for(const yy of g.ys) board[g.x][yy]=null;
+      const removed = {B:0, W:0};
+      for(const yy of g.ys){
+        const c = board[g.x][yy];
+        if(c==='B') removed.B++;
+        if(c==='W') removed.W++;
+        board[g.x][yy]=null;
+      }
       g.x=nx;
-      return true;
+      return { borneOff:true, removed };
     }
+
+    // 目的欄位同高度必須是空的（搬運）
     for(const yy of g.ys){
-      if(board[nx][yy] !== null) return false; // 保護
+      if(board[nx][yy] !== null) return { borneOff:false, removed:{B:0,W:0}, blocked:true };
     }
 
     for(const yy of g.ys) board[nx][yy]=board[g.x][yy];
     for(const yy of g.ys) board[g.x][yy]=null;
     g.x=nx;
+    return { borneOff:false, removed:{B:0,W:0}, blocked:false };
+  }
+
+  // 讓單顆棋子在同一欄往下落到有支撐或地面（逐格動畫）
+  async function dropPieceAt(x, y){
+    while(y>1 && board[x][y-1]===null){
+      board[x][y-1] = board[x][y];
+      board[x][y] = null;
+      y = y-1;
+      render();
+      await sleep(STEP_DELAY);
+    }
+  }
+
+  // 重新生成被帶出界的棋子：在指定欄位頂端往下依序放置（12,12）、（12,11）…（或 x=1）
+  // 放好後每顆都會下落
+  async function respawnAndDrop(color, count){
+    if(count<=0) return;
+
+    const spawnX = (color==='B') ? 1 : 12;
+    let placed = 0;
+
+    for(let k=0; k<count; k++){
+      // 依規則：第一顆 (x,12)，第二顆 (x,11)...
+      let targetY = H - k;
+
+      // 若被占用，往下找下一個空格（避免卡死）
+      while(targetY >= 1 && board[spawnX][targetY] !== null){
+        targetY--;
+      }
+      if(targetY < 1) break;
+
+      board[spawnX][targetY] = color;
+      placed++;
+      render();
+      await sleep(STEP_DELAY);
+
+      // 下落
+      await dropPieceAt(spawnX, targetY);
+    }
+
+    if(placed>0){
+      log(`${color==='B'?'黑棋':'白棋'} 被帶出界 ${count} 顆 → 於 (${spawnX},12) 起重新生成並下落`);
+    }
+  }
+
+  function playerHasPieces(color){
+    for(let x=1;x<=W;x++){
+      for(let y=1;y<=H;y++){
+        if(board[x][y] === color) return true;
+      }
+    }
     return false;
   }
 
   async function performMove(){
+    if(isAnimating) return;
     if(!selected||!group) return;
     if(group.moverColor!==turn) return;
+
+    isAnimating = true;
 
     const above=countAllAbove(selected.x,selected.y);
     const moveAmount=Math.floor(POINTS_PER_TURN/(above+1));
     log(`上方棋子數=${above}，移動量=${moveAmount}`);
 
+    // 1) 往上逐格
     for(let i=0;i<moveAmount;i++){
       if(moveUpStep(group)){
         render();
@@ -309,7 +422,9 @@
       } else break;
     }
 
-    // 改成：前 -> 下 -> (暫停) -> loop
+    // 2) 前 -> 下 -> (暫停) -> loop
+    let carriedOut = {B:0, W:0};
+
     while(true){
       if(frontBlocked(group)){
         while(canMoveDown(group)){
@@ -320,8 +435,17 @@
         break;
       }
 
-      const out=moveForward1(group);
-      if(out){
+      const res = moveForward1(group);
+      carriedOut.B += res.removed.B;
+      carriedOut.W += res.removed.W;
+
+      if(res.blocked){
+        render();
+        await sleep(STEP_DELAY);
+        break;
+      }
+
+      if(res.borneOff){
         render();
         await sleep(STEP_DELAY);
         break;
@@ -338,14 +462,42 @@
       if(belowOccupiedOrGround(group)) break;
     }
 
-    turn=turn==='B'?'W':'B';
-    selected=null;
-    group=null;
+    // 勝利檢查（先檢查當前行動方是否已全出界）
+    if(!playerHasPieces(turn)){
+      render();
+      await sleep(150);
+      alert(`${turn==='B'?'黑棋':'白棋'}勝利！`);
+      isAnimating = false;
+      return;
+    }
+
+    // 新規則：若「對方的棋子」在本回合被帶出界，
+    // 1) 回合不切換（行動方再走一次）
+    // 2) 被帶出界的對方棋子在其「第一格最上方」重新生成並下落
+    const opponent = otherOf(turn);
+    const carriedOutOpponent = (opponent==='B') ? carriedOut.B : carriedOut.W;
+
+    if(carriedOutOpponent > 0){
+      await respawnAndDrop(opponent, carriedOutOpponent);
+      // 不切換回合：turn 保持不變
+      selected = null;
+      group = null;
+      render();
+      isAnimating = false;
+      return;
+    }
+
+    // 沒有帶出對方棋子 => 正常換手
+    turn = opponent;
+    selected = null;
+    group = null;
     render();
+    isAnimating = false;
   }
 
   // 點選棋子後自動 move
   gridEl.addEventListener('click', async e=>{
+    if(isAnimating) return;
     const cell=e.target.closest('.cell');
     if(!cell) return;
 
@@ -361,13 +513,13 @@
     await performMove();
   });
 
-  document.getElementById('btnMove').onclick=performMove;
   document.getElementById('btnReset').onclick=()=>{
     clearBoard();
     placeInitial();
     turn='B';
     selected=null;
     group=null;
+    isAnimating=false;
     log('');
     render();
   };
