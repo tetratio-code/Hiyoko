@@ -198,7 +198,7 @@
   </div>
 
   <div class="panel">
-    <div class="title">小雞棋v2.3</div>
+    <div class="title">小雞棋v2.4</div>
 
     <div class="row">
       <span id="turnBadge" class="badge"><span class="dot"></span><span id="turnText">回合</span></span>
@@ -268,6 +268,7 @@
   let aiBlack=false;
   let aiWhite=false;
 
+  // ✅ 真實規則用到：兩邊都沒棋 => lastMover 勝
   let lastMover = 'B';
 
   function dirOf(c){ return c==='B'?1:-1; }
@@ -329,7 +330,7 @@
 
   function deepCopyBoard(src){ return src.map(col => col.slice()); }
 
-  // ✅ 盤面 key（不含 depth），用於判斷「淨變化」（保留：用來顯示 NOOP/CHG）
+  // 盤面 key（不含 depth），用於 changed/NOOP 判斷（僅用於顯示與除錯）
   function posKey(b){
     let s = '';
     for(let y=1;y<=H;y++){
@@ -347,12 +348,10 @@
   }
 
   function placeInitial(b = board){
-    const blacks=[[7,1],[8,2]];
-    const whites=[[7,2],[7,3],[8,1]];
-    //const blacks=[[1,1],[1,2],[2,2],[2,3]];
-    //const whites=[[2,1]];
-    //const blacks=[[1,1],[1,2],[1,3],[2,1],[2,2],[3,1]];
-    //const whites=[[12,1],[12,2],[12,3],[11,1],[11,2],[10,1]];
+    const blacks=[[1,1],[1,2],[2,2],[2,3]];
+    const whites=[[2,1]];
+    // const blacks=[[1,1],[1,2],[1,3],[2,1],[2,2],[3,1]];
+    // const whites=[[12,1],[12,2],[12,3],[11,1],[11,2],[10,1]];
 
     blacks.forEach(([x,y])=>b[x][y]='B');
     whites.forEach(([x,y])=>b[x][y]='W');
@@ -470,7 +469,7 @@
   }
   function playerHasPieces(color){ return playerHasPiecesOn(board, color); }
 
-  // ===== 終局判定 =====
+  // ===== 終局判定（真實對局）=====
   function checkGameOver(showAlert = false, moverColor = null){
     const bHas = playerHasPieces('B');
     const wHas = playerHasPieces('W');
@@ -562,7 +561,7 @@
     return blackScore - whiteScore;
   }
 
-  // ===== 模擬走子（保留 changed 但「不再用它過濾合法步」）=====
+  // ===== 模擬走子（✅ 帶 lastMover 進搜尋狀態，修正「兩邊都沒棋」判勝負一致性）=====
   function simulateMoveFrom(b0, x, y, turnColor){
     if(b0[x][y] !== turnColor) return { ok:false };
 
@@ -613,10 +612,17 @@
       let winner = null;
       if(!bHas && wHas) winner = 'B';
       else if(!wHas && bHas) winner = 'W';
-      else winner = turnColor;
+      else winner = turnColor; // 兩邊都沒：最後行動者勝（=turnColor）
 
       const changed = (posKey(b) !== beforeKey);
-      return { ok:true, b, nextTurn: turnColor, winner, carriedOutOpponent: 0, changed };
+      return {
+        ok:true, b,
+        nextTurn: turnColor,
+        winner,
+        carriedOutOpponent: 0,
+        changed,
+        lastMover: turnColor
+      };
     }
 
     const opponent = otherOf(turnColor);
@@ -625,31 +631,43 @@
     if(carriedOutOpponent > 0){
       respawnDropSim(b, opponent, carriedOutOpponent);
       const changed = (posKey(b) !== beforeKey);
-      return { ok:true, b, nextTurn: turnColor, carriedOutOpponent, changed };
+      return {
+        ok:true, b,
+        nextTurn: turnColor,
+        carriedOutOpponent,
+        changed,
+        lastMover: turnColor
+      };
     }
 
     const changed = (posKey(b) !== beforeKey);
-    return { ok:true, b, nextTurn: opponent, carriedOutOpponent: 0, changed };
+    return {
+      ok:true, b,
+      nextTurn: opponent,
+      carriedOutOpponent: 0,
+      changed,
+      lastMover: turnColor
+    };
   }
 
-  // ✅ 改動重點：不再避免 NOOP（sim.changed 不再用來過濾）
+  // ✅ 允許 NOOP：不以 sim.changed 過濾
   function listLegalMoves(b, turnColor){
     const moves = [];
     for(let x=1;x<=W;x++){
       for(let y=1;y<=H;y++){
         if(b[x][y] !== turnColor) continue;
         const sim = simulateMoveFrom(b, x, y, turnColor);
-        if(sim.ok) moves.push({ x, y, sim }); // <-- NOOP 也會被納入
+        if(sim.ok) moves.push({ x, y, sim });
       }
     }
     return moves;
   }
 
-  // ===== Alpha-Beta（修正版 TT：EXACT/LOWER/UPPER）=====
+  // ===== Alpha-Beta（✅ TT 與終局判定都納入 lastMover）=====
   const TT = new Map();
 
-  function boardKey(b, turnColor, depth){
-    let s = turnColor + '|' + depth + '|';
+  function boardKey(b, turnColor, depth, lastMoverKey){
+    let s = turnColor + '|' + lastMoverKey + '|' + depth + '|';
     for(let y=1;y<=H;y++){
       for(let x=1;x<=W;x++){
         const v = b[x][y];
@@ -660,7 +678,7 @@
     return s;
   }
 
-  function alphabeta(b, turnColor, depth, alpha, beta){
+  function alphabeta(b, turnColor, depth, alpha, beta, lastMoverAB){
     const blackHas = playerHasPiecesOn(b, 'B');
     const whiteHas = playerHasPiecesOn(b, 'W');
 
@@ -668,15 +686,15 @@
     if(!blackHas && whiteHas) return (WIN + depth);      // 黑勝
     if(!whiteHas && blackHas) return (-WIN - depth);     // 白勝
 
+    // ✅ 修正：兩邊都沒棋 => lastMover 勝（與 checkGameOver 一致）
     if(!blackHas && !whiteHas){
-      const winner = otherOf(turnColor);
-      return (winner === 'B') ? (WIN + depth) : (-WIN - depth);
+      return (lastMoverAB === 'B') ? (WIN + depth) : (-WIN - depth);
     }
 
     if(depth === 0) return evaluateBoard(b);
 
     const alpha0 = alpha, beta0 = beta;
-    const key = boardKey(b, turnColor, depth);
+    const key = boardKey(b, turnColor, depth, lastMoverAB);
     const hit = TT.get(key);
 
     if(hit){
@@ -689,8 +707,9 @@
     const moves = listLegalMoves(b, turnColor);
 
     // PASS：沒得走就換手（消耗深度）
+    // ✅ PASS 也算一次「行動」，因此 lastMoverAB 變成 turnColor
     if(moves.length === 0){
-      const v = alphabeta(b, otherOf(turnColor), depth - 1, alpha, beta);
+      const v = alphabeta(b, otherOf(turnColor), depth - 1, alpha, beta, turnColor);
       TT.set(key, { value: v, flag: 'EXACT' });
       return v;
     }
@@ -703,7 +722,14 @@
     let best = isMax ? -Infinity : Infinity;
 
     for(const m of moves){
-      const v = alphabeta(m.sim.b, m.sim.nextTurn, depth - 1, alpha, beta);
+      const v = alphabeta(
+        m.sim.b,
+        m.sim.nextTurn,
+        depth - 1,
+        alpha,
+        beta,
+        m.sim.lastMover
+      );
 
       if(isMax){
         if(v > best) best = v;
@@ -724,7 +750,7 @@
     return best;
   }
 
-  // ✅ 強制輸出：列出每個可能棋步的 minimax 值
+  // 列出每個可能棋步的 minimax 值
   function logAllMoveScores(scoredMoves, chosen){
     const side = (turn === 'B') ? '黑' : '白';
     appendMoveLine(`== AI分析 ${side}回合 depth=${SEARCH_DEPTH} 候選=${scoredMoves.length} ==`);
@@ -751,7 +777,15 @@
     const scored = [];
     for(const m of moves){
       const immediate = evaluateBoard(m.sim.b);
-      const v = alphabeta(m.sim.b, m.sim.nextTurn, SEARCH_DEPTH - 1, -Infinity, Infinity);
+
+      const v = alphabeta(
+        m.sim.b,
+        m.sim.nextTurn,
+        SEARCH_DEPTH - 1,
+        -Infinity,
+        Infinity,
+        m.sim.lastMover
+      );
 
       scored.push({
         x: m.x, y: m.y,
@@ -777,6 +811,8 @@
     if(group.moverColor!==turn) return;
 
     isAnimating = true;
+
+    // ✅ 規則：此回合「行動者」先記下來（即使最後 PASS）
     lastMover = turn;
 
     const above=countAllAbove(selected.x,selected.y);
@@ -916,6 +952,9 @@
       if(over2.over) return;
 
       appendMoveLine(`${turn==='B'?'黑':'白'}: PASS`);
+      // ✅ 真實對局：PASS 也是行動，lastMover 更新成當前方
+      lastMover = turn;
+
       turn = otherOf(turn);
       selected = null;
       group = null;
