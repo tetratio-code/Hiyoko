@@ -10,10 +10,10 @@
       --gap: 6px;
 
       /* 低彩度綠色系背景 */
-      --page-bg: #0f1a14;     /* 深綠灰 */
+      --page-bg: #0f1a14;
       --panel-bg: rgba(255,255,255,0.04);
 
-      --board-bg: #13261b;    /* 棋盤底色：低彩度綠 */
+      --board-bg: #768f5d;
       --text: #e5e7eb;
       --muted: #94a3b8;
       --accent: #38bdf8;
@@ -22,7 +22,7 @@
 
     body{
       margin:0; padding:18px;
-      background: var(--page-bg);          /* ← 改背景 */
+      background: var(--page-bg);
       color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans TC", Arial;
     }
@@ -76,7 +76,7 @@
       grid-template-columns: repeat(12, var(--cell));
       grid-template-rows: repeat(12, var(--cell));
       gap: var(--gap);
-      background: var(--board-bg);         /* ← 棋盤底色也偏綠 */
+      background: var(--board-bg);
       padding: var(--gap);
       border-radius: 12px;
     }
@@ -106,7 +106,7 @@
       box-shadow: 0 6px 14px rgba(0,0,0,0.35);
     }
 
-    /* 提高黑棋不透明度/存在感：更深、更不透明、加一點高光 */
+    /* 黑棋更「實」：不透明、深色、帶高光 */
     .black{
       background: radial-gradient(circle at 30% 30%, rgba(40,55,70,1), rgba(6,10,16,1) 70%);
       border: 1px solid rgba(255,255,255,0.12);
@@ -164,6 +164,10 @@
 
   function dirOf(c){ return c==='B'?1:-1; }
 
+  function log(msg){
+    logEl.textContent = msg;
+  }
+
   function clearBoard(){
     for(let x=1;x<=W;x++)
       for(let y=1;y<=H;y++)
@@ -205,6 +209,7 @@
     turnBadgeEl.textContent = turn==='B'?'黑棋':'白棋';
   }
 
+  // 群組：選定棋子 + 同欄上方所有棋子（不分顏色，直到遇到空格為止）
   function computeGroup(x,y){
     const moverColor=board[x][y];
     if(!moverColor) return null;
@@ -217,6 +222,7 @@
     return {x,ys,moverColor};
   }
 
+  // 移動量：依「所有上方棋子數」（不分顏色，且在同一堆疊直到遇空格）
   function countAllAbove(x,y){
     let c=0;
     for(let yy=y+1;yy<=H;yy++){
@@ -261,11 +267,18 @@
     }
   }
 
+  // ✅ 檢查可否「往前」：由檢查「前方」改成檢查「前下方」
+  //   對群組內每一格 (x, yy)，檢查 (x+dir, yy-1) 是否有棋子
+  //   yy=1 時 yy-1=0 視為棋盤外，不算被擋
   function frontBlocked(g){
-    const nx=g.x+dirOf(g.moverColor);
-    if(nx<1||nx>W) return false;
-    for(const yy of g.ys)
-      if(board[nx][yy]!==null) return true;
+    const nx = g.x + dirOf(g.moverColor);
+    if(nx<1 || nx>W) return false;
+
+    for(const yy of g.ys){
+      const fy = yy - 1;         // 前下方的 y
+      if(fy < 1) continue;       // 棋盤外，不算被擋
+      if(board[nx][fy] !== null) return true;
+    }
     return false;
   }
 
@@ -276,6 +289,11 @@
       g.x=nx;
       return true;
     }
+    // 目的欄位同高度必須是空的（保持原本搬運規則）
+    for(const yy of g.ys){
+      if(board[nx][yy] !== null) return false; // 不應發生（理論上由其他規則避免），保護
+    }
+
     for(const yy of g.ys) board[nx][yy]=board[g.x][yy];
     for(const yy of g.ys) board[g.x][yy]=null;
     g.x=nx;
@@ -288,15 +306,17 @@
 
     const above=countAllAbove(selected.x,selected.y);
     const moveAmount=Math.floor(POINTS_PER_TURN/(above+1));
+    log(`上方棋子數=${above}，移動量=${moveAmount}`);
 
     for(let i=0;i<moveAmount;i++){
       if(moveUpStep(group)){
         render();
         await sleep(STEP_DELAY);
-      }
+      } else break;
     }
 
     while(true){
+      // 這裡的「前方」判定已改為「前下方」判定
       if(frontBlocked(group)){
         while(canMoveDown(group)){
           moveDown1(group);
@@ -325,21 +345,20 @@
     render();
   }
 
-  gridEl.addEventListener('click',async e=>{
+  // 點選棋子後自動 move
+  gridEl.addEventListener('click', async e=>{
     const cell=e.target.closest('.cell');
     if(!cell) return;
 
     const x=Number(cell.dataset.x);
     const y=Number(cell.dataset.y);
 
-    // 只能點自己回合的棋
     if(board[x][y]!==turn) return;
 
-    // ✅ 點選棋子後自動 move（不需要再點一次、不需要按 Move）
     selected={x,y};
     group=computeGroup(x,y);
     render();
-    await sleep(50); // 讓選取框先顯示一下
+    await sleep(50); // 先顯示選取
     await performMove();
   });
 
@@ -350,6 +369,7 @@
     turn='B';
     selected=null;
     group=null;
+    log('');
     render();
   };
 
