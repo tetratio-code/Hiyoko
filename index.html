@@ -167,7 +167,7 @@
   </div>
 
   <div class="panel">
-    <div class="title">小雞棋v1.6</div>
+    <div class="title">小雞棋v1.7</div>
 
     <div class="row">
       <span id="turnBadge" class="badge"><span class="dot"></span><span id="turnText">回合</span></span>
@@ -230,18 +230,6 @@
   function log(msg){ logEl.textContent = msg || ''; }
 
   function deepCopyBoard(src){ return src.map(col => col.slice()); }
-
-  function boardKeyFast(b){
-    let s = '';
-    for(let y=1;y<=H;y++){
-      for(let x=1;x<=W;x++){
-        const v = b[x][y];
-        s += (v ? v : '.');
-      }
-      s += '/';
-    }
-    return s;
-  }
 
   function clearBoard(b = board){
     for(let x=1;x<=W;x++) for(let y=1;y<=H;y++) b[x][y]=null;
@@ -373,12 +361,12 @@
         b[g.x][yy] = null;
       }
       g.x = nx;
-      return { borneOff:true, removed, blocked:false };
+      return { borneOff:true, removed, blocked:false, moved:true };
     }
 
     for(const yy of g.ys){
       if(b[nx][yy] !== null){
-        return { borneOff:false, removed:{B:0, W:0}, blocked:true };
+        return { borneOff:false, removed:{B:0, W:0}, blocked:true, moved:false };
       }
     }
 
@@ -386,7 +374,7 @@
     for(const yy of g.ys) b[g.x][yy] = null;
     g.x = nx;
 
-    return { borneOff:false, removed:{B:0, W:0}, blocked:false };
+    return { borneOff:false, removed:{B:0, W:0}, blocked:false, moved:true };
   }
   function moveForward1(g){ return moveForward1On(board, g); }
 
@@ -492,11 +480,10 @@
     return blackScore - whiteScore;
   }
 
-  // ===== 模擬走子：changed 修正（盤面變化 OR 有帶出對手）=====
+  // ===== 模擬走子：用「過程是否真的動過」決定 changed =====
   function simulateMoveFrom(b0, x, y, turnColor){
     if(b0[x][y] !== turnColor) return { ok:false };
 
-    const beforeKey = boardKeyFast(b0);
     const b = deepCopyBoard(b0);
 
     const g = computeGroupOn(b, x, y);
@@ -505,8 +492,12 @@
     const above = countAllAboveOn(b, x, y);
     const moveAmount = Math.floor(POINTS_PER_TURN / (above + 1));
 
+    let didMove = false;
+
+    // 上移
     for(let i=0;i<moveAmount;i++){
-      if(!moveUpStepOn(b, g)) break;
+      if(moveUpStepOn(b, g)) didMove = true;
+      else break;
     }
 
     let carriedOut = {B:0, W:0};
@@ -514,11 +505,16 @@
 
     while(safety++ < 3000){
       if(frontBlockedOn(b, g)){
-        while(canMoveDownOn(b, g)) moveDown1On(b, g);
+        while(canMoveDownOn(b, g)){
+          moveDown1On(b, g);
+          didMove = true;
+        }
         break;
       }
 
       const res = moveForward1On(b, g);
+      if(res.moved) didMove = true;
+
       carriedOut.B += res.removed.B;
       carriedOut.W += res.removed.W;
 
@@ -527,6 +523,7 @@
 
       if(!belowOccupiedOrGroundOn(b, g)){
         moveDown1On(b, g);
+        didMove = true;
       }
 
       if(belowOccupiedOrGroundOn(b, g)) break;
@@ -539,9 +536,7 @@
       if(!bHas && !wHas) winner = turnColor;
       else if(!bHas) winner = 'B';
       else if(!wHas) winner = 'W';
-
-      const afterKey = boardKeyFast(b);
-      return { ok:true, b, nextTurn: turnColor, winner, carriedOutOpponent: 0, changed: (afterKey !== beforeKey) };
+      return { ok:true, b, nextTurn: turnColor, winner, carriedOutOpponent: 0, changed: didMove };
     }
 
     const opponent = otherOf(turnColor);
@@ -549,14 +544,11 @@
 
     if(carriedOutOpponent > 0){
       respawnDropSim(b, opponent, carriedOutOpponent);
-      const afterKey = boardKeyFast(b);
-      const changed = (afterKey !== beforeKey) || (carriedOutOpponent > 0); // ✅ 修正
-      return { ok:true, b, nextTurn: turnColor, carriedOutOpponent, changed };
+      // 即使重生後盤面剛好長一樣，也算有意義（回合不換）
+      return { ok:true, b, nextTurn: turnColor, carriedOutOpponent, changed: true };
     }
 
-    const afterKey = boardKeyFast(b);
-    const changed = (afterKey !== beforeKey);
-    return { ok:true, b, nextTurn: opponent, carriedOutOpponent: 0, changed };
+    return { ok:true, b, nextTurn: opponent, carriedOutOpponent: 0, changed: didMove };
   }
 
   function listLegalMoves(b, turnColor){
@@ -661,7 +653,7 @@
     return bestMove ? { x: bestMove.x, y: bestMove.y, score: bestVal } : null;
   }
 
-  // ===== 走子（動畫版）：PASS 判斷也修正 =====
+  // ===== 走子（動畫版）：也用 didMove 判斷 PASS =====
   async function performMove(){
     if(isAnimating) return;
     if(!selected||!group) return;
@@ -669,14 +661,15 @@
 
     isAnimating = true;
 
-    const beforeKey = boardKeyFast(board);
-
     const above=countAllAbove(selected.x,selected.y);
     const moveAmount=Math.floor(POINTS_PER_TURN/(above+1));
     log(`上方棋子數=${above}，移動量=${moveAmount}`);
 
+    let didMove = false;
+
     for(let i=0;i<moveAmount;i++){
       if(moveUpStep(group)){
+        didMove = true;
         render();
         await sleep(STEP_DELAY);
       } else break;
@@ -689,6 +682,7 @@
       if(frontBlocked(group)){
         while(canMoveDown(group)){
           moveDown1(group);
+          didMove = true;
           render();
           await sleep(STEP_DELAY);
         }
@@ -696,6 +690,8 @@
       }
 
       const res = moveForward1(group);
+      if(res.moved) didMove = true;
+
       carriedOut.B += res.removed.B;
       carriedOut.W += res.removed.W;
 
@@ -712,6 +708,7 @@
 
       if(!belowOccupiedOrGround(group)){
         moveDown1(group);
+        didMove = true;
       }
 
       render();
@@ -744,7 +741,7 @@
         return;
       }
 
-      // 依規則：帶出對方 -> 回合不換（即使盤面最後長得一樣也不能 PASS）
+      // 帶出對方：回合不換
       selected = null;
       group = null;
       render();
@@ -753,14 +750,13 @@
       return;
     }
 
-    // ✅ 只有「盤面沒變」且「沒有帶出對方」才 PASS
-    const afterKey = boardKeyFast(board);
-    if(afterKey === beforeKey){
+    // ✅ 只有真的「完全沒動」才 PASS
+    if(!didMove){
       turn = opponent;
       selected = null;
       group = null;
       render();
-      log('此步無法造成盤面變化 → PASS 換對方');
+      log('此步無法造成任何移動 → PASS 換對方');
       isAnimating = false;
       await maybeTriggerAIMove();
       return;
@@ -776,7 +772,7 @@
     await maybeTriggerAIMove();
   }
 
-  // ===== AI 觸發（PASS 換手，雙方AI可連續）=====
+  // ===== AI 觸發 =====
   async function maybeTriggerAIMove(){
     if(isAnimating) return;
 
