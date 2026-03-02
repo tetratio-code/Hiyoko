@@ -9,7 +9,6 @@
       --cell: 56px;
       --gap: 6px;
 
-      /* 低彩度綠色系背景 */
       --page-bg: #0f1a14;
       --panel-bg: rgba(255,255,255,0.04);
 
@@ -87,7 +86,7 @@
       border-radius: 10px;
       position: relative;
       display:flex;
-      align-items:center;
+      align-items:flex-start;
       justify-content:center;
     }
 
@@ -104,9 +103,9 @@
       height: calc(var(--cell) - 18px);
       border-radius: 10px;
       box-shadow: 0 6px 14px rgba(0,0,0,0.35);
+      margin-top: 9px;
     }
 
-    /* 黑棋更「實」：不透明、深色、帶高光 */
     .black{
       background: radial-gradient(circle at 30% 30%, rgba(40,55,70,1), rgba(6,10,16,1) 70%);
       border: 1px solid rgba(255,255,255,0.12);
@@ -209,7 +208,6 @@
     turnBadgeEl.textContent = turn==='B'?'黑棋':'白棋';
   }
 
-  // 群組：選定棋子 + 同欄上方所有棋子（不分顏色，直到遇到空格為止）
   function computeGroup(x,y){
     const moverColor=board[x][y];
     if(!moverColor) return null;
@@ -222,7 +220,6 @@
     return {x,ys,moverColor};
   }
 
-  // 移動量：依「所有上方棋子數」（不分顏色，且在同一堆疊直到遇空格）
   function countAllAbove(x,y){
     let c=0;
     for(let yy=y+1;yy<=H;yy++){
@@ -267,16 +264,14 @@
     }
   }
 
-  // ✅ 檢查可否「往前」：由檢查「前方」改成檢查「前下方」
-  //   對群組內每一格 (x, yy)，檢查 (x+dir, yy-1) 是否有棋子
-  //   yy=1 時 yy-1=0 視為棋盤外，不算被擋
+  // 檢查可否「往前」：檢查「前下方」是否有其他棋子
   function frontBlocked(g){
     const nx = g.x + dirOf(g.moverColor);
     if(nx<1 || nx>W) return false;
 
     for(const yy of g.ys){
-      const fy = yy - 1;         // 前下方的 y
-      if(fy < 1) continue;       // 棋盤外，不算被擋
+      const fy = yy - 1;
+      if(fy < 1) continue;
       if(board[nx][fy] !== null) return true;
     }
     return false;
@@ -289,9 +284,8 @@
       g.x=nx;
       return true;
     }
-    // 目的欄位同高度必須是空的（保持原本搬運規則）
     for(const yy of g.ys){
-      if(board[nx][yy] !== null) return false; // 不應發生（理論上由其他規則避免），保護
+      if(board[nx][yy] !== null) return false; // 保護
     }
 
     for(const yy of g.ys) board[nx][yy]=board[g.x][yy];
@@ -315,8 +309,8 @@
       } else break;
     }
 
+    // 改成：前 -> 下 -> (暫停) -> loop
     while(true){
-      // 這裡的「前方」判定已改為「前下方」判定
       if(frontBlocked(group)){
         while(canMoveDown(group)){
           moveDown1(group);
@@ -327,16 +321,21 @@
       }
 
       const out=moveForward1(group);
-      render();
-      await sleep(STEP_DELAY);
-      if(out) break;
-
-      if(!belowOccupiedOrGround(group)){
-        moveDown1(group);
+      if(out){
         render();
         await sleep(STEP_DELAY);
-        if(belowOccupiedOrGround(group)) break;
-      } else break;
+        break;
+      }
+
+      // 前移後立刻檢查並（必要時）下移，不在前移後暫停
+      if(!belowOccupiedOrGround(group)){
+        moveDown1(group);
+      }
+
+      render();
+      await sleep(STEP_DELAY);
+
+      if(belowOccupiedOrGround(group)) break;
     }
 
     turn=turn==='B'?'W':'B';
@@ -358,7 +357,7 @@
     selected={x,y};
     group=computeGroup(x,y);
     render();
-    await sleep(50); // 先顯示選取
+    await sleep(50);
     await performMove();
   });
 
