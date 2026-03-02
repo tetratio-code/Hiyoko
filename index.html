@@ -198,7 +198,7 @@
   </div>
 
   <div class="panel">
-    <div class="title">小雞棋v2.1</div>
+    <div class="title">小雞棋v2.2</div>
 
     <div class="row">
       <span id="turnBadge" class="badge"><span class="dot"></span><span id="turnText">回合</span></span>
@@ -650,9 +650,14 @@
     const whiteHas = playerHasPiecesOn(b, 'W');
 
     // 終局（以「自己棋子全出界即勝」的規則：黑沒棋=黑勝 => 對黑正分）
-    if(!blackHas && whiteHas) return (WIN + depth);
-    if(!whiteHas && blackHas) return (-WIN - depth);
-    if(!blackHas && !whiteHas) return 0;
+    if(!blackHas && whiteHas) return (WIN + depth);      // 黑勝
+    if(!whiteHas && blackHas) return (-WIN - depth);     // 白勝
+    
+    if(!blackHas && !whiteHas){
+      const winner = otherOf(turnColor); // 最後行動者
+      if(winner === 'B') return (WIN + depth);
+      else               return (-WIN - depth);
+    }
 
     if(depth === 0) return evaluateBoard(b);
 
