@@ -31,7 +31,7 @@
     }
 
     .panel{
-      min-width: 320px;
+      min-width: 340px;
       background: var(--panel-bg);
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 14px;
@@ -41,8 +41,8 @@
 
     .title{
       font-size: 16px;
-      font-weight: 800;
-      letter-spacing: .5px;
+      font-weight: 900;
+      letter-spacing: .6px;
       margin-bottom: 10px;
     }
 
@@ -52,13 +52,20 @@
       margin: 8px 0;
     }
 
-    button{
+    button, select{
       background: rgba(56,189,248,0.15);
       border: 1px solid rgba(56,189,248,0.35);
       color: var(--text);
       padding: 8px 10px;
       border-radius: 10px;
       cursor: pointer;
+      font-weight: 700;
+    }
+
+    select{
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      cursor: default;
       font-weight: 650;
     }
 
@@ -80,7 +87,7 @@
       background: rgba(255,255,255,0.04);
       font-size: 12px;
       color: var(--text);
-      font-weight: 800;
+      font-weight: 900;
     }
     .dot{
       width:10px; height:10px; border-radius:999px;
@@ -123,6 +130,7 @@
       left:6px; top:6px;
       font-size: 10px;
       color: rgba(148,163,184,0.35);
+      pointer-events:none;
     }
 
     .piece{
@@ -166,6 +174,15 @@
     </div>
 
     <div class="row">
+      <label style="font-size:12px;color:var(--muted);font-weight:800;">對戰模式</label>
+      <select id="modeSel" title="對戰模式">
+        <option value="hh">雙方人類</option>
+        <option value="ab">AI 執黑</option>
+        <option value="aw">AI 執白</option>
+      </select>
+    </div>
+
+    <div class="row">
       <button id="btnReset">Reset</button>
     </div>
 
@@ -176,6 +193,8 @@
 <script>
 (() => {
   const STEP_DELAY = 100;
+  const AI_THINK_DELAY = 220;
+
   const W = 12;
   const H = 12;
   const POINTS_PER_TURN = 6;
@@ -189,36 +208,47 @@
   const logEl = document.getElementById('log');
   const turnBadgeEl = document.getElementById('turnBadge');
   const turnTextEl = document.getElementById('turnText');
+  const modeSel = document.getElementById('modeSel');
 
   let turn='B';
   let selected=null;
   let group=null;
   let isAnimating=false;
 
+  let aiBlack=false;
+  let aiWhite=false;
+
   function dirOf(c){ return c==='B'?1:-1; }
   function otherOf(c){ return c==='B'?'W':'B'; }
+  function isAI(color){ return (color==='B' && aiBlack) || (color==='W' && aiWhite); }
 
   function log(msg){
     logEl.textContent = msg || '';
   }
 
-  function clearBoard(){
-    for(let x=1;x<=W;x++)
-      for(let y=1;y<=H;y++)
-        board[x][y]=null;
+  function deepCopyBoard(src){
+    return src.map(col => col.slice());
   }
 
-  function placeInitial(){
+  function clearBoard(b = board){
+    for(let x=1;x<=W;x++)
+      for(let y=1;y<=H;y++)
+        b[x][y]=null;
+  }
+
+  function placeInitial(b = board){
     const blacks=[[1,1],[1,2],[1,3],[2,1],[2,2],[3,1]];
     const whites=[[12,1],[12,2],[12,3],[11,1],[11,2],[10,1]];
-    blacks.forEach(([x,y])=>board[x][y]='B');
-    whites.forEach(([x,y])=>board[x][y]='W');
+    blacks.forEach(([x,y])=>b[x][y]='B');
+    whites.forEach(([x,y])=>b[x][y]='W');
   }
 
   function updateTurnUI(){
     const dot = turnBadgeEl.querySelector('.dot');
     dot.className = 'dot ' + (turn==='B'?'black':'white');
-    turnTextEl.textContent = `現在回合：${turn==='B'?'黑棋':'白棋'}`;
+    const side = (turn==='B'?'黑棋':'白棋');
+    const aiTag = isAI(turn) ? '（AI）' : '（人類）';
+    turnTextEl.textContent = `現在回合：${side}${aiTag}`;
   }
 
   function render(){
@@ -250,108 +280,110 @@
   }
 
   // 群組：選定棋子 + 同欄上方所有棋子（不分顏色，直到遇到空格為止）
-  function computeGroup(x,y){
-    const moverColor=board[x][y];
+  function computeGroupOn(b, x,y){
+    const moverColor=b[x][y];
     if(!moverColor) return null;
 
     const ys=[];
     for(let yy=y;yy<=H;yy++){
-      if(board[x][yy]!==null) ys.push(yy);
+      if(b[x][yy]!==null) ys.push(yy);
       else break;
     }
     return {x,ys,moverColor};
   }
+  function computeGroup(x,y){ return computeGroupOn(board, x, y); }
 
   // 移動量：依「所有上方棋子數」（不分顏色，且在同一堆疊直到遇空格）
-  function countAllAbove(x,y){
+  function countAllAboveOn(b, x,y){
     let c=0;
     for(let yy=y+1;yy<=H;yy++){
-      if(board[x][yy]===null) break;
+      if(b[x][yy]===null) break;
       c++;
     }
     return c;
   }
+  function countAllAbove(x,y){ return countAllAboveOn(board, x, y); }
 
-  function moveUpStep(g){
+  function moveUpStepOn(b, g){
     const top=g.ys[g.ys.length-1];
     if(top>=H) return false;
-    if(board[g.x][top+1]!==null) return false;
+    if(b[g.x][top+1]!==null) return false;
 
     for(let i=g.ys.length-1;i>=0;i--){
       const yy=g.ys[i];
-      board[g.x][yy+1]=board[g.x][yy];
-      board[g.x][yy]=null;
+      b[g.x][yy+1]=b[g.x][yy];
+      b[g.x][yy]=null;
       g.ys[i]=yy+1;
     }
     return true;
   }
+  function moveUpStep(g){ return moveUpStepOn(board, g); }
 
-  function belowOccupiedOrGroundAt(x, bottomY){
-    if(bottomY===1) return true;
-    return board[x][bottomY-1]!==null;
+  function belowOccupiedOrGroundOn(b, g){
+    const bottom=g.ys[0];
+    if(bottom===1) return true;
+    return b[g.x][bottom-1]!==null;
   }
+  function belowOccupiedOrGround(g){ return belowOccupiedOrGroundOn(board, g); }
 
-  function belowOccupiedOrGround(g){
-    return belowOccupiedOrGroundAt(g.x, g.ys[0]);
-  }
-
-  function canMoveDown(g){
+  function canMoveDownOn(b, g){
     const bottom=g.ys[0];
     if(bottom===1) return false;
-    return board[g.x][bottom-1]===null;
+    return b[g.x][bottom-1]===null;
   }
+  function canMoveDown(g){ return canMoveDownOn(board, g); }
 
-  function moveDown1(g){
+  function moveDown1On(b, g){
     for(let i=0;i<g.ys.length;i++){
       const yy=g.ys[i];
-      board[g.x][yy-1]=board[g.x][yy];
-      board[g.x][yy]=null;
+      b[g.x][yy-1]=b[g.x][yy];
+      b[g.x][yy]=null;
       g.ys[i]=yy-1;
     }
   }
+  function moveDown1(g){ return moveDown1On(board, g); }
 
   // 檢查可否「往前」：檢查「前下方」是否有其他棋子
-  function frontBlocked(g){
+  function frontBlockedOn(b, g){
     const nx = g.x + dirOf(g.moverColor);
     if(nx<1 || nx>W) return false;
 
     for(const yy of g.ys){
       const fy = yy - 1;
       if(fy < 1) continue;
-      if(board[nx][fy] !== null) return true;
+      if(b[nx][fy] !== null) return true;
     }
     return false;
   }
+  function frontBlocked(g){ return frontBlockedOn(board, g); }
 
   // 往前 1 格；若出界 => 移除群組並回報移除的黑/白數量（混色）
-  function moveForward1(g){
+  function moveForward1On(b, g){
     const nx=g.x+dirOf(g.moverColor);
 
-    // 出界：移除群組
     if(nx<1||nx>W){
       const removed = {B:0, W:0};
       for(const yy of g.ys){
-        const c = board[g.x][yy];
+        const c = b[g.x][yy];
         if(c==='B') removed.B++;
         if(c==='W') removed.W++;
-        board[g.x][yy]=null;
+        b[g.x][yy]=null;
       }
       g.x=nx;
-      return { borneOff:true, removed };
+      return { borneOff:true, removed, blocked:false };
     }
 
-    // 目的欄位同高度必須是空的（搬運）
     for(const yy of g.ys){
-      if(board[nx][yy] !== null) return { borneOff:false, removed:{B:0,W:0}, blocked:true };
+      if(b[nx][yy] !== null) return { borneOff:false, removed:{B:0,W:0}, blocked:true };
     }
 
-    for(const yy of g.ys) board[nx][yy]=board[g.x][yy];
-    for(const yy of g.ys) board[g.x][yy]=null;
+    for(const yy of g.ys) b[nx][yy]=b[g.x][yy];
+    for(const yy of g.ys) b[g.x][yy]=null;
     g.x=nx;
     return { borneOff:false, removed:{B:0,W:0}, blocked:false };
   }
+  function moveForward1(g){ return moveForward1On(board, g); }
 
-  // 讓單顆棋子在同一欄往下落到有支撐或地面（逐格動畫）
   async function dropPieceAt(x, y){
     while(y>1 && board[x][y-1]===null){
       board[x][y-1] = board[x][y];
@@ -362,45 +394,146 @@
     }
   }
 
-  // 重新生成被帶出界的棋子：在指定欄位頂端往下依序放置（12,12）、（12,11）…（或 x=1）
-  // 放好後每顆都會下落
   async function respawnAndDrop(color, count){
     if(count<=0) return;
 
     const spawnX = (color==='B') ? 1 : 12;
-    let placed = 0;
-
     for(let k=0; k<count; k++){
-      // 依規則：第一顆 (x,12)，第二顆 (x,11)...
       let targetY = H - k;
-
-      // 若被占用，往下找下一個空格（避免卡死）
-      while(targetY >= 1 && board[spawnX][targetY] !== null){
-        targetY--;
-      }
+      while(targetY >= 1 && board[spawnX][targetY] !== null) targetY--;
       if(targetY < 1) break;
 
       board[spawnX][targetY] = color;
-      placed++;
       render();
       await sleep(STEP_DELAY);
-
-      // 下落
       await dropPieceAt(spawnX, targetY);
     }
 
-    if(placed>0){
-      log(`${color==='B'?'黑棋':'白棋'} 被帶出界 ${count} 顆 → 於 (${spawnX},12) 起重新生成並下落`);
-    }
+    log(`${color==='B'?'黑棋':'白棋'} 被帶出界 ${count} 顆 → 於 (${spawnX},12) 起重新生成並下落`);
   }
 
-  function playerHasPieces(color){
+  function playerHasPiecesOn(b, color){
     for(let x=1;x<=W;x++){
       for(let y=1;y<=H;y++){
-        if(board[x][y] === color) return true;
+        if(b[x][y] === color) return true;
       }
     }
     return false;
+  }
+  function playerHasPieces(color){ return playerHasPiecesOn(board, color); }
+
+  // ======= AI：模擬走一步（不動畫） =======
+  function respawnDropSim(b, color, count){
+    if(count<=0) return;
+    const spawnX = (color==='B') ? 1 : 12;
+
+    for(let k=0; k<count; k++){
+      let y = H - k;
+      while(y >= 1 && b[spawnX][y] !== null) y--;
+      if(y < 1) break;
+
+      b[spawnX][y] = color;
+
+      // drop
+      while(y > 1 && b[spawnX][y-1] === null){
+        b[spawnX][y-1] = b[spawnX][y];
+        b[spawnX][y] = null;
+        y--;
+      }
+    }
+  }
+
+  function simulateMoveFrom(b0, x, y, turnColor){
+    if(b0[x][y] !== turnColor) return { ok:false };
+
+    const b = deepCopyBoard(b0);
+    const g = computeGroupOn(b, x, y);
+    if(!g) return { ok:false };
+
+    const above = countAllAboveOn(b, x, y);
+    const moveAmount = Math.floor(POINTS_PER_TURN / (above + 1));
+
+    // up
+    for(let i=0;i<moveAmount;i++){
+      if(!moveUpStepOn(b, g)) break;
+    }
+
+    // forward->down->pause(loop) logic (pause ignored)
+    let carriedOut = {B:0, W:0};
+    let safety = 0;
+
+    while(safety++ < 3000){
+      if(frontBlockedOn(b, g)){
+        while(canMoveDownOn(b, g)) moveDown1On(b, g);
+        break;
+      }
+
+      const res = moveForward1On(b, g);
+      carriedOut.B += res.removed.B;
+      carriedOut.W += res.removed.W;
+
+      if(res.blocked) break;
+      if(res.borneOff) break;
+
+      if(!belowOccupiedOrGroundOn(b, g)){
+        moveDown1On(b, g);
+      }
+
+      if(belowOccupiedOrGroundOn(b, g)) break;
+    }
+
+    // win check for mover
+    if(!playerHasPiecesOn(b, turnColor)){
+      return { ok:true, b, nextTurn: turnColor, winner: turnColor };
+    }
+
+    const opponent = otherOf(turnColor);
+    const carriedOutOpponent = (opponent==='B') ? carriedOut.B : carriedOut.W;
+
+    if(carriedOutOpponent > 0){
+      respawnDropSim(b, opponent, carriedOutOpponent);
+      // opponent pieces carried out => turn stays with mover
+      return { ok:true, b, nextTurn: turnColor, carriedOutOpponent };
+    }
+
+    // normal switch
+    return { ok:true, b, nextTurn: opponent, carriedOutOpponent: 0 };
+  }
+
+  function pickRandomAIMove(){
+    const candidates = [];
+    for(let x=1;x<=W;x++){
+      for(let y=1;y<=H;y++){
+        if(board[x][y] !== turn) continue;
+        const sim = simulateMoveFrom(board, x, y, turn);
+        if(sim.ok) candidates.push({x,y});
+      }
+    }
+    if(candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  async function maybeTriggerAIMove(){
+    if(isAnimating) return;
+    if(!isAI(turn)) return;
+
+    // 給 UI 一點喘息 + 模擬思考
+    await sleep(AI_THINK_DELAY);
+
+    // 可能剛好被 reset 或模式改了
+    if(isAnimating || !isAI(turn)) return;
+
+    const mv = pickRandomAIMove();
+    if(!mv){
+      log('AI 找不到可走的棋（理論上不該發生）。');
+      return;
+    }
+
+    selected = {x: mv.x, y: mv.y};
+    group = computeGroup(mv.x, mv.y);
+    render();
+    await sleep(50);
+    await performMove();
   }
 
   async function performMove(){
@@ -424,8 +557,9 @@
 
     // 2) 前 -> 下 -> (暫停) -> loop
     let carriedOut = {B:0, W:0};
+    let safety = 0;
 
-    while(true){
+    while(safety++ < 3000){
       if(frontBlocked(group)){
         while(canMoveDown(group)){
           moveDown1(group);
@@ -465,39 +599,43 @@
     // 勝利檢查（先檢查當前行動方是否已全出界）
     if(!playerHasPieces(turn)){
       render();
-      await sleep(150);
+      await sleep(120);
       alert(`${turn==='B'?'黑棋':'白棋'}勝利！`);
       isAnimating = false;
       return;
     }
 
-    // 新規則：若「對方的棋子」在本回合被帶出界，
-    // 1) 回合不切換（行動方再走一次）
-    // 2) 被帶出界的對方棋子在其「第一格最上方」重新生成並下落
+    // 新規則：若「對方棋子」在本回合被帶出界 => 回合不切換 + 對方棋子重生並下落
     const opponent = otherOf(turn);
     const carriedOutOpponent = (opponent==='B') ? carriedOut.B : carriedOut.W;
 
     if(carriedOutOpponent > 0){
       await respawnAndDrop(opponent, carriedOutOpponent);
-      // 不切換回合：turn 保持不變
+      // turn 不變
       selected = null;
       group = null;
       render();
       isAnimating = false;
+      // 若還是 AI 的回合，繼續走
+      await maybeTriggerAIMove();
       return;
     }
 
-    // 沒有帶出對方棋子 => 正常換手
+    // 正常換手
     turn = opponent;
     selected = null;
     group = null;
     render();
     isAnimating = false;
+
+    await maybeTriggerAIMove();
   }
 
-  // 點選棋子後自動 move
+  // 人類點選：點一下就走（若該方為 AI 則忽略點擊）
   gridEl.addEventListener('click', async e=>{
     if(isAnimating) return;
+    if(isAI(turn)) return;
+
     const cell=e.target.closest('.cell');
     if(!cell) return;
 
@@ -513,6 +651,17 @@
     await performMove();
   });
 
+  function applyMode(v){
+    aiBlack = (v === 'ab');
+    aiWhite = (v === 'aw');
+    updateTurnUI();
+    render();
+    // 若切換後剛好輪到 AI，就讓 AI 走
+    maybeTriggerAIMove();
+  }
+
+  modeSel.addEventListener('change', (e)=> applyMode(e.target.value));
+
   document.getElementById('btnReset').onclick=()=>{
     clearBoard();
     placeInitial();
@@ -522,10 +671,13 @@
     isAnimating=false;
     log('');
     render();
+    maybeTriggerAIMove();
   };
 
+  // init
   clearBoard();
   placeInitial();
+  applyMode(modeSel.value);
   render();
 })();
 </script>
