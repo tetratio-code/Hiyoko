@@ -198,7 +198,7 @@
   </div>
 
   <div class="panel">
-    <div class="title">小雞棋v2.2a</div>
+    <div class="title">小雞棋v2.2</div>
 
     <div class="row">
       <span id="turnBadge" class="badge"><span class="dot"></span><span id="turnText">回合</span></span>
@@ -347,13 +347,8 @@
   }
 
   function placeInitial(b = board){
-    // 你現在用來測循環的局面
-    const blacks=[[7,1],[8,2]];
-    const whites=[[7,2],[7,3],[8,1]];
-
-    // 原始開局（需要就換回來）
-    // const blacks=[[1,1],[1,2],[1,3],[2,1],[2,2],[3,1]];
-    // const whites=[[12,1],[12,2],[12,3],[11,1],[11,2],[10,1]];
+    const blacks=[[1,1],[1,2],[1,3],[2,1],[2,2],[3,1]];
+    const whites=[[12,1],[12,2],[12,3],[11,1],[11,2],[10,1]];
 
     blacks.forEach(([x,y])=>b[x][y]='B');
     whites.forEach(([x,y])=>b[x][y]='W');
