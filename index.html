@@ -858,8 +858,16 @@
     const mv = pickBestAIMove();
 
     if(!mv){
-      const cnt = countPiecesOn(board);
-      debug(`AI PASS (no meaningful moves). boardCount B=${cnt.B} W=${cnt.W}. switch turn ${turn} -> ${otherOf(turn)}`);
+    
+      // 🔴 先檢查是否終局
+      const over = checkGameOver(turn, true);
+      if(over.over){
+        debug(`GAME OVER detected in PASS branch. winner=${over.winner}`);
+        return;
+      }
+    
+      debug(`AI PASS (no meaningful moves). boardCount B=${countPiecesOn(board).B} W=${countPiecesOn(board).W}`);
+    
       turn = otherOf(turn);
       selected = null;
       group = null;
