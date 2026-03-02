@@ -8,37 +8,45 @@
     :root{
       --cell: 56px;
       --gap: 6px;
-      --board-bg: #0f172a;
-      --cell-bg: #111827;
-      --cell-line: #1f2937;
+
+      /* 低彩度綠色系背景 */
+      --page-bg: #0f1a14;     /* 深綠灰 */
+      --panel-bg: rgba(255,255,255,0.04);
+
+      --board-bg: #13261b;    /* 棋盤底色：低彩度綠 */
       --text: #e5e7eb;
       --muted: #94a3b8;
       --accent: #38bdf8;
       --warn: #fb7185;
     }
+
     body{
       margin:0; padding:18px;
-      background: #0b1020;
+      background: var(--page-bg);          /* ← 改背景 */
       color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans TC", Arial;
     }
+
     .wrap{
       display:flex; gap:18px; flex-wrap:wrap;
       align-items:flex-start;
     }
+
     .panel{
       min-width: 320px;
-      background: rgba(255,255,255,0.04);
+      background: var(--panel-bg);
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 14px;
       padding: 14px 14px 10px;
       box-shadow: 0 10px 30px rgba(0,0,0,.25);
     }
+
     .row{
       display:flex; gap:10px; flex-wrap:wrap;
       align-items:center;
       margin: 8px 0;
     }
+
     button{
       background: rgba(56,189,248,0.15);
       border: 1px solid rgba(56,189,248,0.35);
@@ -48,27 +56,31 @@
       cursor: pointer;
       font-weight: 650;
     }
+
     .hint{
       font-size: 12px;
       color: var(--muted);
       line-height: 1.5;
       margin-top: 8px;
     }
+
     .board{
       background: rgba(255,255,255,0.03);
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 14px;
       padding: 12px;
     }
+
     .grid{
       display:grid;
       grid-template-columns: repeat(12, var(--cell));
-      grid-template-rows: repeat(12, var(--cell)); /* ← 改成12高 */
+      grid-template-rows: repeat(12, var(--cell));
       gap: var(--gap);
-      background: var(--board-bg);
+      background: var(--board-bg);         /* ← 棋盤底色也偏綠 */
       padding: var(--gap);
       border-radius: 12px;
     }
+
     .cell{
       background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
       border: 1px solid rgba(255,255,255,0.06);
@@ -78,6 +90,7 @@
       align-items:center;
       justify-content:center;
     }
+
     .cell::after{
       content: attr(data-xy);
       position:absolute;
@@ -85,14 +98,23 @@
       font-size: 10px;
       color: rgba(148,163,184,0.35);
     }
+
     .piece{
       width: calc(var(--cell) - 18px);
       height: calc(var(--cell) - 18px);
       border-radius: 10px;
       box-shadow: 0 6px 14px rgba(0,0,0,0.35);
     }
-    .black{ background:#111827; }
-    .white{ background:#e5e7eb; }
+
+    /* 提高黑棋不透明度/存在感：更深、更不透明、加一點高光 */
+    .black{
+      background: radial-gradient(circle at 30% 30%, rgba(40,55,70,1), rgba(6,10,16,1) 70%);
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .white{
+      background: #e5e7eb;
+      border: 1px solid rgba(0,0,0,0.10);
+    }
 
     .selOutline{
       outline: 3px solid rgba(56,189,248,0.85);
@@ -103,11 +125,13 @@
     }
   </style>
 </head>
+
 <body>
 <div class="wrap">
   <div class="board">
     <div id="grid" class="grid"></div>
   </div>
+
   <div class="panel">
     <div class="row">
       <span id="turnBadge">Turn</span>
@@ -124,8 +148,7 @@
 (() => {
   const STEP_DELAY = 100;
   const W = 12;
-  const H = 12;   // ← 高度改成 12
-
+  const H = 12;
   const POINTS_PER_TURN = 6;
 
   function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
@@ -163,6 +186,7 @@
         d.dataset.x=x;
         d.dataset.y=y;
         d.setAttribute('data-xy',`${x},${y}`);
+
         const v=board[x][y];
         if(v){
           const p=document.createElement('div');
@@ -171,8 +195,10 @@
             p.classList.add('grpGlow');
           d.appendChild(p);
         }
+
         if(selected && selected.x===x && selected.y===y)
           d.classList.add('selOutline');
+
         gridEl.appendChild(d);
       }
     }
@@ -182,6 +208,7 @@
   function computeGroup(x,y){
     const moverColor=board[x][y];
     if(!moverColor) return null;
+
     const ys=[];
     for(let yy=y;yy<=H;yy++){
       if(board[x][yy]!==null) ys.push(yy);
@@ -203,6 +230,7 @@
     const top=g.ys[g.ys.length-1];
     if(top>=H) return false;
     if(board[g.x][top+1]!==null) return false;
+
     for(let i=g.ys.length-1;i>=0;i--){
       const yy=g.ys[i];
       board[g.x][yy+1]=board[g.x][yy];
@@ -244,15 +272,12 @@
   function moveForward1(g){
     const nx=g.x+dirOf(g.moverColor);
     if(nx<1||nx>W){
-      for(const yy of g.ys)
-        board[g.x][yy]=null;
+      for(const yy of g.ys) board[g.x][yy]=null;
       g.x=nx;
       return true;
     }
-    for(const yy of g.ys)
-      board[nx][yy]=board[g.x][yy];
-    for(const yy of g.ys)
-      board[g.x][yy]=null;
+    for(const yy of g.ys) board[nx][yy]=board[g.x][yy];
+    for(const yy of g.ys) board[g.x][yy]=null;
     g.x=nx;
     return false;
   }
@@ -300,24 +325,33 @@
     render();
   }
 
-  gridEl.addEventListener('click',e=>{
+  gridEl.addEventListener('click',async e=>{
     const cell=e.target.closest('.cell');
     if(!cell) return;
+
     const x=Number(cell.dataset.x);
     const y=Number(cell.dataset.y);
+
+    // 只能點自己回合的棋
     if(board[x][y]!==turn) return;
 
-    if(selected && selected.x===x && selected.y===y){
-      performMove();
-      return;
-    }
+    // ✅ 點選棋子後自動 move（不需要再點一次、不需要按 Move）
     selected={x,y};
     group=computeGroup(x,y);
     render();
+    await sleep(50); // 讓選取框先顯示一下
+    await performMove();
   });
 
   document.getElementById('btnMove').onclick=performMove;
-  document.getElementById('btnReset').onclick=()=>{clearBoard();placeInitial();turn='B';selected=null;group=null;render();};
+  document.getElementById('btnReset').onclick=()=>{
+    clearBoard();
+    placeInitial();
+    turn='B';
+    selected=null;
+    group=null;
+    render();
+  };
 
   clearBoard();
   placeInitial();
