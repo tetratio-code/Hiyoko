@@ -198,7 +198,7 @@
   </div>
 
   <div class="panel">
-    <div class="title">小雞棋v2.4</div>
+    <div class="title">小雞棋v2.5</div>
 
     <div class="row">
       <span id="turnBadge" class="badge"><span class="dot"></span><span id="turnText">回合</span></span>
@@ -231,7 +231,6 @@
     <div id="moves" class="movesBox"></div>
   </div>
 </div>
-
 <script>
 (() => {
   const STEP_DELAY = 100;
@@ -246,9 +245,8 @@
   const INITIAL_PIECES_PER_SIDE = 6;
   const WIN = 1e9;
 
-  // ✅ 新規則：連續第 5 次 NOOP（含 PASS）=> 和局
-  const DRAW_NOOP_N = 5;
-  let noopStreak = 0;
+  // ✅ 新規則：同一局面（含輪到誰、lastMover）出現第 3 次 => 和局
+  const DRAW_REPEAT_N = 3;
 
   function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
@@ -363,19 +361,6 @@
     whites.forEach(([x,y])=>b[x][y]='W');
   }
 
-  // ===== NOOP 和局規則 =====
-  function resetNoopStreak(){ noopStreak = 0; }
-  function bumpNoopStreakAndCheckDraw(showAlert = false){
-    noopStreak++;
-    log(`NOOP累積：${noopStreak}/${DRAW_NOOP_N}`);
-    if(noopStreak >= DRAW_NOOP_N){
-      appendMoveLine(`== 和局：連續 NOOP 達 ${DRAW_NOOP_N} 次 ==`);
-      if(showAlert) alert('和局！');
-      return { over:true, draw:true };
-    }
-    return { over:false, draw:false };
-  }
-
   // ===== 規則核心 =====
   function computeGroupOn(b, x,y){
     const moverColor=b[x][y];
@@ -488,6 +473,25 @@
   }
   function playerHasPieces(color){ return playerHasPiecesOn(board, color); }
 
+  // ===== 三次重複局面：真實對局追蹤 =====
+  const REP = new Map();
+  function gamePosKey(){
+    // ✅ 把「輪到誰」與 lastMover 也納入（避免同盤面不同狀態混在一起）
+    return `${turn}|${lastMover}|${posKey(board)}`;
+  }
+  function recordAndCheckDraw(showAlert = false){
+    const k = gamePosKey();
+    const c = (REP.get(k) || 0) + 1;
+    REP.set(k, c);
+
+    if(c >= DRAW_REPEAT_N){
+      appendMoveLine(`== 和局：重複局面達 ${DRAW_REPEAT_N} 次 ==`);
+      if(showAlert) alert('和局！');
+      return { over:true, draw:true };
+    }
+    return { over:false, draw:false };
+  }
+
   // ===== 終局判定（真實對局）=====
   function checkGameOver(showAlert = false, moverColor = null){
     const bHas = playerHasPieces('B');
@@ -580,7 +584,7 @@
     return blackScore - whiteScore;
   }
 
-  // ===== 模擬走子（帶 lastMover 進搜尋狀態）=====
+  // ===== 模擬走子（帶 lastMover）=====
   function simulateMoveFrom(b0, x, y, turnColor){
     if(b0[x][y] !== turnColor) return { ok:false };
 
@@ -682,11 +686,25 @@
     return moves;
   }
 
-  // ===== Alpha-Beta（TT 納入 lastMover；注意：此版本不在搜尋內判 NOOP 和局，只在真實對局判）=====
+  // ===== Alpha-Beta（三次重複 => 和局=0；TT key 納入重複次數）=====
   const TT = new Map();
 
-  function boardKey(b, turnColor, depth, lastMoverKey){
-    let s = turnColor + '|' + lastMoverKey + '|' + depth + '|';
+  function abPosKey(b, turnColor, lastMoverKey){
+    return `${turnColor}|${lastMoverKey}|${posKey(b)}`;
+  }
+  function histInc(hist, key){
+    const c = (hist.get(key) || 0) + 1;
+    hist.set(key, c);
+    return c;
+  }
+  function histDec(hist, key){
+    const c = (hist.get(key) || 0) - 1;
+    if(c <= 0) hist.delete(key);
+    else hist.set(key, c);
+  }
+
+  function boardKey(b, turnColor, depth, lastMoverKey, repCount){
+    let s = turnColor + '|' + lastMoverKey + '|' + repCount + '|' + depth + '|';
     for(let y=1;y<=H;y++){
       for(let x=1;x<=W;x++){
         const v = b[x][y];
@@ -697,13 +715,21 @@
     return s;
   }
 
-  function alphabeta(b, turnColor, depth, alpha, beta, lastMoverAB){
+  function alphabeta(b, turnColor, depth, alpha, beta, lastMoverAB, hist){
+    const pkey = abPosKey(b, turnColor, lastMoverAB);
+    const repCount = hist.get(pkey) || 0;
+
+    // ✅ 三次重複：和局
+    if(repCount >= DRAW_REPEAT_N) return 0;
+
     const blackHas = playerHasPiecesOn(b, 'B');
     const whiteHas = playerHasPiecesOn(b, 'W');
 
-    if(!blackHas && whiteHas) return (WIN + depth);      // 黑勝
-    if(!whiteHas && blackHas) return (-WIN - depth);     // 白勝
+    // 終局（黑沒棋=黑勝 => 對黑正分）
+    if(!blackHas && whiteHas) return (WIN + depth);
+    if(!whiteHas && blackHas) return (-WIN - depth);
 
+    // 兩邊都沒棋 => lastMover 勝
     if(!blackHas && !whiteHas){
       return (lastMoverAB === 'B') ? (WIN + depth) : (-WIN - depth);
     }
@@ -711,7 +737,7 @@
     if(depth === 0) return evaluateBoard(b);
 
     const alpha0 = alpha, beta0 = beta;
-    const key = boardKey(b, turnColor, depth, lastMoverAB);
+    const key = boardKey(b, turnColor, depth, lastMoverAB, repCount);
     const hit = TT.get(key);
 
     if(hit){
@@ -723,8 +749,16 @@
 
     const moves = listLegalMoves(b, turnColor);
 
+    // PASS：沒得走就換手（消耗深度）
+    // PASS 也算一次「行動」，lastMoverAB 變成 turnColor
     if(moves.length === 0){
-      const v = alphabeta(b, otherOf(turnColor), depth - 1, alpha, beta, turnColor);
+      const nk = abPosKey(b, otherOf(turnColor), turnColor);
+      const c = histInc(hist, nk);
+      let v = 0;
+      if(c >= DRAW_REPEAT_N) v = 0;
+      else v = alphabeta(b, otherOf(turnColor), depth - 1, alpha, beta, turnColor, hist);
+      histDec(hist, nk);
+
       TT.set(key, { value: v, flag: 'EXACT' });
       return v;
     }
@@ -737,14 +771,14 @@
     let best = isMax ? -Infinity : Infinity;
 
     for(const m of moves){
-      const v = alphabeta(
-        m.sim.b,
-        m.sim.nextTurn,
-        depth - 1,
-        alpha,
-        beta,
-        m.sim.lastMover
-      );
+      const nk = abPosKey(m.sim.b, m.sim.nextTurn, m.sim.lastMover);
+      const c = histInc(hist, nk);
+
+      let v = 0;
+      if(c >= DRAW_REPEAT_N) v = 0;
+      else v = alphabeta(m.sim.b, m.sim.nextTurn, depth - 1, alpha, beta, m.sim.lastMover, hist);
+
+      histDec(hist, nk);
 
       if(isMax){
         if(v > best) best = v;
@@ -788,17 +822,28 @@
 
     const isMax = (turn === 'B');
 
+    // ✅ root repetition history：把當前局面記一次
+    const rootHist = new Map();
+    histInc(rootHist, abPosKey(board, turn, lastMover));
+
     const scored = [];
     for(const m of moves){
       const immediate = evaluateBoard(m.sim.b);
 
-      const v = alphabeta(
+      const hist = new Map(rootHist);
+      const nk = abPosKey(m.sim.b, m.sim.nextTurn, m.sim.lastMover);
+      const c = histInc(hist, nk);
+
+      let v = 0;
+      if(c >= DRAW_REPEAT_N) v = 0;
+      else v = alphabeta(
         m.sim.b,
         m.sim.nextTurn,
         SEARCH_DEPTH - 1,
         -Infinity,
         Infinity,
-        m.sim.lastMover
+        m.sim.lastMover,
+        hist
       );
 
       scored.push({
@@ -902,19 +947,6 @@
     if(didMove) appendMoveLine(`${turn==='B'?'黑':'白'}: (${selected.x},${selected.y})`);
     else       appendMoveLine(`${turn==='B'?'黑':'白'}: PASS`);
 
-    // ✅ NOOP streak：只看「盤面是否有實際移動」
-    // - didMove=false => NOOP+1
-    // - didMove=true  => streak 清零
-    if(!didMove){
-      const dr = bumpNoopStreakAndCheckDraw(true);
-      if(dr.over){
-        isAnimating = false;
-        return;
-      }
-    } else {
-      resetNoopStreak();
-    }
-
     if(carriedOutOpponent > 0){
       await respawnAndDrop(opponent, carriedOutOpponent);
 
@@ -927,9 +959,17 @@
         return;
       }
 
+      // ✅ 走完 + 可能重生後，局面落定，檢查三次重複
       selected = null;
       group = null;
       render();
+
+      const dr = recordAndCheckDraw(true);
+      if(dr.over){
+        isAnimating = false;
+        return;
+      }
+
       isAnimating = false;
       await maybeTriggerAIMove();
       return;
@@ -941,6 +981,13 @@
       group = null;
       render();
       log('此步無法造成任何移動 → PASS 換對方');
+
+      const dr = recordAndCheckDraw(true);
+      if(dr.over){
+        isAnimating = false;
+        return;
+      }
+
       isAnimating = false;
       await maybeTriggerAIMove();
       return;
@@ -950,8 +997,14 @@
     selected = null;
     group = null;
     render();
-    isAnimating = false;
 
+    const dr = recordAndCheckDraw(true);
+    if(dr.over){
+      isAnimating = false;
+      return;
+    }
+
+    isAnimating = false;
     await maybeTriggerAIMove();
   }
 
@@ -962,6 +1015,9 @@
     const over0 = checkGameOver(false, lastMover);
     if(over0.over) return;
 
+    // ✅ 每次準備走之前，也確認是否已經因重複判和（保險）
+    // （record 在走完後做；這裡只檢查，不加次數）
+    // 若要更嚴格，可在此也 record，但會變成「等待也算一次」；不建議。
     if(!isAI(turn)) return;
 
     await sleep(AI_THINK_DELAY);
@@ -975,18 +1031,22 @@
     const mv = pickBestAIMove();
 
     if(!mv){
-      // 沒棋可走 => PASS（也算 NOOP）
-      appendMoveLine(`${turn==='B'?'黑':'白'}: PASS`);
-      lastMover = turn;
+      const over2 = checkGameOver(false, lastMover);
+      if(over2.over) return;
 
-      const dr = bumpNoopStreakAndCheckDraw(true);
-      if(dr.over) return;
+      appendMoveLine(`${turn==='B'?'黑':'白'}: PASS`);
+      // PASS 也是行動
+      lastMover = turn;
 
       turn = otherOf(turn);
       selected = null;
       group = null;
       render();
       log('AI 缺乏有意義棋步 → PASS 換對方');
+
+      const dr = recordAndCheckDraw(true);
+      if(dr.over) return;
+
       await maybeTriggerAIMove();
       return;
     }
@@ -1051,10 +1111,11 @@
     isAnimating=false;
     log('');
 
-    // ✅ reset 也要清 NOOP 計數
-    resetNoopStreak();
-
+    // ✅ 重複局面統計清空，並把初始局面記一次
+    REP.clear();
     render();
+    recordAndCheckDraw(false);
+
     maybeTriggerAIMove();
   };
 
@@ -1064,10 +1125,9 @@
   applyMode(modeSel.value);
   render();
 
-  // ✅ 初始 NOOP streak = 0
-  resetNoopStreak();
+  // ✅ 初始局面算第一次出現
+  recordAndCheckDraw(false);
 })();
 </script>
-  
 </body>
 </html>
