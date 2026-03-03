@@ -253,7 +253,7 @@
   </div>
 
   <div class="panel">
-    <div class="title">小雞棋v3.8</div>
+    <div class="title">小雞棋v3.7</div>
 
     <div class="row">
       <span id="turnBadge" class="badge"><span class="dot"></span><span id="turnText">回合</span></span>
@@ -607,11 +607,6 @@
       }
     }
 
-    function chartEvalAtTerminal(b){
-      // 終局也用評值函數差距（黑視角），避免滿版
-      return evaluateBoard(b);
-    }
-    
     const blackOff = INITIAL_PIECES_PER_SIDE - blackOn;
     const whiteOff = INITIAL_PIECES_PER_SIDE - whiteOn;
     blackScore += 14 * Math.max(0, blackOff);
@@ -804,78 +799,6 @@
     return best;
   }
 
-  function alphabetaDual(b, turnColor, depth, alpha, beta, lastMoverAB, noopStreakAB){
-    // draw by NOOP
-    if(noopStreakAB >= DRAW_NOOP_N) return { score: 0, chart: 0 };
-  
-    const blackHas = playerHasPiecesOn(b, 'B');
-    const whiteHas = playerHasPiecesOn(b, 'W');
-  
-    // ===== 終局：score 用 WIN/LOSS；chart 用「未放大評值」=====
-    if(!blackHas && whiteHas) return { score: (WIN + depth), chart: chartEvalAtTerminal(b) };
-    if(!whiteHas && blackHas) return { score: (-WIN - depth), chart: chartEvalAtTerminal(b) };
-  
-    if(!blackHas && !whiteHas){
-      const s = (lastMoverAB === 'B') ? (WIN + depth) : (-WIN - depth);
-      return { score: s, chart: chartEvalAtTerminal(b) };
-    }
-  
-    // leaf
-    if(depth === 0){
-      const e = evaluateBoard(b);
-      return { score: e, chart: e };
-    }
-  
-    const moves = listLegalMoves(b, turnColor);
-  
-    // PASS：沒得走（算 NOOP）
-    if(moves.length === 0){
-      return alphabetaDual(b, otherOf(turnColor), depth - 1, alpha, beta, turnColor, noopStreakAB + 1);
-    }
-  
-    const isMax = (turnColor === 'B');
-  
-    // move ordering（用一般評值即可）
-    for(const m of moves) m.order = evaluateBoard(m.sim.b);
-    moves.sort((a,b2) => isMax ? (b2.order - a.order) : (a.order - b2.order));
-  
-    let bestScore = isMax ? -Infinity : Infinity;
-    let bestChart = 0;
-  
-    for(const m of moves){
-      const nextNoop = m.sim.changed ? 0 : (noopStreakAB + 1);
-  
-      const r = alphabetaDual(
-        m.sim.b,
-        m.sim.nextTurn,
-        depth - 1,
-        alpha,
-        beta,
-        m.sim.lastMover,
-        nextNoop
-      );
-  
-      // ✅ 用 score 決定哪條分支最好；但把那條分支的 chart 一起帶上來
-      if(isMax){
-        if(r.score > bestScore){
-          bestScore = r.score;
-          bestChart = r.chart;
-        }
-        alpha = Math.max(alpha, bestScore);
-        if(alpha >= beta) break;
-      }else{
-        if(r.score < bestScore){
-          bestScore = r.score;
-          bestChart = r.chart;
-        }
-        beta = Math.min(beta, bestScore);
-        if(alpha >= beta) break;
-      }
-    }
-  
-    return { score: bestScore, chart: bestChart };
-  }
-
   // ===== ✅ 每步都畫 + 白少算一步（只影響畫圖，不影響 AI 選步深度）=====
   function chartDepth(){
     let d = SEARCH_DEPTH;
@@ -886,9 +809,17 @@
   }
   
   function computeChartScoreNow(){
-    const D = chartDepth()
-    const r = alphabetaDual(board, turn, D, -Infinity, Infinity, lastMover, noopStreak);
-    return r.chart; // ✅ 直接回傳「未被 WIN/LOSS 放大」的 root 分數
+    const D = chartDepth();
+    TT.clear();
+  
+    const v = alphabeta(board, turn, D, -Infinity, Infinity, lastMover, noopStreak);
+  
+    // ✅ 終局分數用「評值函數差距」顯示，不用 WIN/Loss 滿版
+    if(Math.abs(v) >= 9e8){
+      return evaluateBoard(board); // 黑視角差距（正=黑優，負=白優）
+    }
+  
+    return v;
   }
   
   function pushChartPoint(){
