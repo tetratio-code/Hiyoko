@@ -800,13 +800,13 @@
   }
 
   // ===== ✅ 每步都畫 + 白少算一步（只影響畫圖，不影響 AI 選步深度）=====
-  // 圖表深度：只看 slider，不看 turn；並強制偶數，避免奇數深度的先手暫時優勢
   function chartDepth(){
     let d = SEARCH_DEPTH;
     if(d < 2) d = 2;
   
     // 永遠使用 full-move 深度（偶數）
-    if(d % 2 === 1){ d -= 1; }
+    if(d % 2 === 1){ d += 1; }
+    if(turn === 'W'){ d -= 1; }
   
     return d;
   }
