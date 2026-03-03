@@ -253,7 +253,7 @@
   </div>
 
   <div class="panel">
-    <div class="title">小雞棋v3.7</div>
+    <div class="title">小雞棋v3.8</div>
 
     <div class="row">
       <span id="turnBadge" class="badge"><span class="dot"></span><span id="turnText">回合</span></span>
@@ -798,6 +798,85 @@
     TT.set(key, { value: best, flag });
     return best;
   }
+  function alphabetaEx(b, turnColor, depth, alpha, beta, lastMoverAB, noopStreakAB){
+    // 和局（已解）
+    if(noopStreakAB >= DRAW_NOOP_N){
+      return { v: 0, solved: true, terminalEval: 0 };
+    }
+  
+    const blackHas = playerHasPiecesOn(b, 'B');
+    const whiteHas = playerHasPiecesOn(b, 'W');
+  
+    // 終局（已解）：同時帶回「此終局盤面」的 evaluateBoard
+    if(!blackHas && whiteHas){
+      return { v: (WIN + depth), solved: true, terminalEval: evaluateBoard(b) };
+    }
+    if(!whiteHas && blackHas){
+      return { v: (-WIN - depth), solved: true, terminalEval: evaluateBoard(b) };
+    }
+    if(!blackHas && !whiteHas){
+      const v = (lastMoverAB === 'B') ? (WIN + depth) : (-WIN - depth);
+      return { v, solved: true, terminalEval: evaluateBoard(b) };
+    }
+  
+    if(depth === 0){
+      const e = evaluateBoard(b);
+      return { v: e, solved: false, terminalEval: null };
+    }
+  
+    const moves = listLegalMoves(b, turnColor);
+  
+    // PASS（算 NOOP）：如果這條路最後解出 WIN/LOSS，要把 terminalEval 往上帶
+    if(moves.length === 0){
+      const r = alphabetaEx(b, otherOf(turnColor), depth - 1, alpha, beta, turnColor, noopStreakAB + 1);
+      return r;
+    }
+  
+    const isMax = (turnColor === 'B');
+  
+    for(const m of moves) m.order = evaluateBoard(m.sim.b);
+    moves.sort((a,b2) => isMax ? (b2.order - a.order) : (a.order - b2.order));
+  
+    let best = isMax ? -Infinity : Infinity;
+    let bestSolved = false;
+    let bestTerminalEval = null;
+  
+    for(const m of moves){
+      const nextNoop = m.sim.changed ? 0 : (noopStreakAB + 1);
+  
+      const r = alphabetaEx(
+        m.sim.b,
+        m.sim.nextTurn,
+        depth - 1,
+        alpha,
+        beta,
+        m.sim.lastMover,
+        nextNoop
+      );
+  
+      const v = r.v;
+  
+      if(isMax){
+        if(v > best){
+          best = v;
+          bestSolved = r.solved;
+          bestTerminalEval = r.terminalEval;
+        }
+        alpha = Math.max(alpha, best);
+        if(alpha >= beta) break;
+      }else{
+        if(v < best){
+          best = v;
+          bestSolved = r.solved;
+          bestTerminalEval = r.terminalEval;
+        }
+        beta = Math.min(beta, best);
+        if(alpha >= beta) break;
+      }
+    }
+  
+    return { v: best, solved: bestSolved, terminalEval: bestTerminalEval };
+  }
 
   // ===== ✅ 每步都畫 + 白少算一步（只影響畫圖，不影響 AI 選步深度）=====
   function chartDepth(){
@@ -810,16 +889,16 @@
   
   function computeChartScoreNow(){
     const D = chartDepth();
-    TT.clear();
+    TT.clear(); // 走勢圖這條可以不使用你原本 TT（先簡單化）
   
-    const v = alphabeta(board, turn, D, -Infinity, Infinity, lastMover, noopStreak);
+    const r = alphabetaEx(board, turn, D, -Infinity, Infinity, lastMover, noopStreak);
   
-    // ✅ 終局分數用「評值函數差距」顯示，不用 WIN/Loss 滿版
-    if(Math.abs(v) >= 9e8){
-      return evaluateBoard(board); // 黑視角差距（正=黑優，負=白優）
+    // 已解勝負：固定用「最後收束終局盤面」的評值
+    if(Math.abs(r.v) >= 9e8 && r.terminalEval !== null){
+      return r.terminalEval;
     }
   
-    return v;
+    return r.v;
   }
   
   function pushChartPoint(){
