@@ -253,7 +253,7 @@
   </div>
 
   <div class="panel">
-    <div class="title">小雞棋v3.10</div>
+    <div class="title">小雞棋v3.11</div>
 
     <div class="row">
       <span id="turnBadge" class="badge"><span class="dot"></span><span id="turnText">回合</span></span>
@@ -707,8 +707,10 @@
     return moves;
   }
 
-  // ===== Alpha-Beta（NOOP 和局=0；TT key 納入 noopStreakAB）=====
+  // ===== Alpha-Beta（AI：終局追求 evaluateBoard 最大；不看勝負步數）=====
+  // 這個版本：終局不加/不減 depth，並用「終局 evaluateBoard」當同勝負的 tie-break（用極小權重混入）。
   const TT = new Map();
+  const EPS_TE = 1e-3; // ✅ 用極小權重把 terminal eval 混入，讓同樣 WIN/LOSS 時追求更大終局評值
 
   function boardKey(b, turnColor, depth, lastMoverKey, noopStreakKey){
     let s = turnColor + '|' + lastMoverKey + '|' + noopStreakKey + '|' + depth + '|';
@@ -728,13 +730,17 @@
     const blackHas = playerHasPiecesOn(b, 'B');
     const whiteHas = playerHasPiecesOn(b, 'W');
 
-    // 終局（黑沒棋=黑勝 => 對黑正分）
-    if(!blackHas && whiteHas) return (WIN + depth);
-    if(!whiteHas && blackHas) return (-WIN - depth);
+    // ✅ 終局：不看步數，只看勝負 + 終局 evaluateBoard tie-break
+    // 黑沒棋=黑勝（依你原規則），回傳 +WIN + te*eps
+    if(!blackHas && whiteHas) return (WIN + evaluateBoard(b) * EPS_TE);
+
+    // 白沒棋=白勝（黑敗），回傳 -WIN + te*eps（白在 minimax 會傾向讓 te 更小）
+    if(!whiteHas && blackHas) return (-WIN + evaluateBoard(b) * EPS_TE);
 
     // 兩邊都沒棋 => lastMover 勝
     if(!blackHas && !whiteHas){
-      return (lastMoverAB === 'B') ? (WIN + depth) : (-WIN - depth);
+      const base = (lastMoverAB === 'B') ? WIN : -WIN;
+      return (base + evaluateBoard(b) * EPS_TE);
     }
 
     if(depth === 0) return evaluateBoard(b);
@@ -798,6 +804,7 @@
     return best;
   }
 
+  // ===== 走勢圖：alphabetaEx（維持你現在版本，用於平滑顯示）=====
   function alphabetaEx(b, turnColor, depth, alpha, beta, lastMoverAB, noopStreakAB){
     const WIN_TH = 9e8;
 
@@ -918,7 +925,7 @@
     addBar(computeChartScoreNow());
   }
 
-  // ===== AI：選步仍用「平衡深度 SEARCH_DEPTH」=====
+  // ===== AI：選步（改為：終局追求最大 evaluateBoard；不看勝負步數）=====
   function pickBestAIMove(){
     TT.clear();
     const moves = listLegalMoves(board, turn);
