@@ -76,14 +76,6 @@
       cursor: pointer;
     }
 
-    .hint{
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.5;
-      margin-top: 8px;
-      white-space: pre-wrap;
-    }
-
     .badge{
       display:inline-flex;
       align-items:center;
@@ -165,7 +157,7 @@
       box-shadow: 0 0 0 3px rgba(56,189,248,0.35) inset;
     }
 
-    /* 棋譜 */
+    /* 走勢圖 */
     .movesTitle{
       margin-top: 12px;
       font-size: 12px;
@@ -174,19 +166,82 @@
       opacity: .9;
       letter-spacing: .2px;
     }
+
     .movesBox{
       margin-top: 6px;
       padding: 10px;
       border-radius: 10px;
       border: 1px solid rgba(255,255,255,0.10);
       background: rgba(0,0,0,0.18);
-      color: rgba(229,231,235,0.92);
-      font-size: 12px;
-      line-height: 1.45;
-      white-space: pre-wrap;
       max-height: 320px;
       overflow: auto;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    .chart{
+      position: relative;
+      width: 100%;
+      min-height: 140px;
+    }
+
+    .chartCenter{
+      position:absolute;
+      left:0; right:0;
+      top:50%;
+      height:1px;
+      background: rgba(148,163,184,0.35);
+    }
+
+    .chartCols{
+      display:flex;
+      gap: 6px;
+      align-items: center;
+      height: 240px; /* 每手一條，直條本身上下延伸 */
+      padding: 6px 4px;
+    }
+
+    .barCol{
+      position: relative;
+      width: 10px;
+      height: 100%;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      overflow: hidden;
+      flex: 0 0 auto;
+    }
+
+    .barMid{
+      position:absolute;
+      left:0; right:0;
+      top:50%;
+      height:1px;
+      background: rgba(148,163,184,0.22);
+    }
+
+    .barUp{
+      position:absolute;
+      left:0; right:0;
+      top:50%;
+      transform: translateY(-100%);
+      height: 0%;
+      background: #0b1220; /* 黑優勢 */
+    }
+
+    .barDown{
+      position:absolute;
+      left:0; right:0;
+      top:50%;
+      height: 0%;
+      background: #e5e7eb; /* 白優勢 */
+    }
+
+    .chartLegend{
+      display:flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: rgba(148,163,184,0.85);
+      margin-top: 6px;
+      user-select: none;
     }
   </style>
 </head>
@@ -222,12 +277,10 @@
 
     <div class="row">
       <button id="btnReset">Reset</button>
-      <button id="btnClearMoves" title="清空棋譜（不影響盤面）">Clear Moves</button>
+      <button id="btnClearMoves" title="清空走勢（不影響盤面）">Clear</button>
     </div>
 
-    <div id="log" class="hint"></div>
-
-    <div class="movesTitle">棋譜／AI分析（累積）</div>
+    <div class="movesTitle">局勢走勢（每手一條）</div>
     <div id="moves" class="movesBox"></div>
   </div>
 </div>
@@ -246,7 +299,7 @@
   const INITIAL_PIECES_PER_SIDE = 6;
   const WIN = 1e9;
 
-  // ✅ 規則：連續第 N 次「淨變化為 NOOP」（含 PASS）=> 和局（分數強制=0）
+  // ✅ 規則：連續第 N 次「淨變化為 NOOP」（含 PASS）=> 和局（評值強制=0）
   const DRAW_NOOP_N = 5;
 
   function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
@@ -254,7 +307,6 @@
   const board = Array.from({length: W+1}, ()=>Array(H+1).fill(null));
 
   const gridEl = document.getElementById('grid');
-  const logEl = document.getElementById('log');
   const movesEl = document.getElementById('moves');
   const turnBadgeEl = document.getElementById('turnBadge');
   const turnTextEl = document.getElementById('turnText');
@@ -271,34 +323,91 @@
   let aiBlack=false;
   let aiWhite=false;
 
-  // ✅ 兩邊都沒棋 => lastMover 勝（真實規則 & 搜尋一致）
+  // ✅ 兩邊都沒棋 => lastMover 勝
   let lastMover = 'B';
 
   // ✅ 連續 NOOP 計數（真實對局）
   let noopStreak = 0;
 
+  // ===== 走勢圖 UI =====
+  let chartEl=null, colsEl=null;
+
+  function initChart(){
+    movesEl.innerHTML = '';
+    chartEl = document.createElement('div');
+    chartEl.className = 'chart';
+
+    const center = document.createElement('div');
+    center.className = 'chartCenter';
+
+    colsEl = document.createElement('div');
+    colsEl.className = 'chartCols';
+
+    const legend = document.createElement('div');
+    legend.className = 'chartLegend';
+    legend.innerHTML = `<span>↑ 黑優勢</span><span>↓ 白優勢</span>`;
+
+    chartEl.appendChild(center);
+    chartEl.appendChild(colsEl);
+    movesEl.appendChild(chartEl);
+    movesEl.appendChild(legend);
+  }
+
+  // 固定縮放：分數絕對值 >= SCALE 當作滿格（你可自行調大/調小）
+  const SCALE = 30;
+
+  function scoreToPct(v){
+    // 終局極值
+    if(Math.abs(v) >= 9e8) return 100;
+    const a = Math.min(SCALE, Math.abs(v));
+    return Math.round((a / SCALE) * 100);
+  }
+
+  function addBar(score){
+    if(!colsEl) initChart();
+
+    const col = document.createElement('div');
+    col.className = 'barCol';
+
+    const mid = document.createElement('div');
+    mid.className = 'barMid';
+
+    const up = document.createElement('div');
+    up.className = 'barUp';
+
+    const down = document.createElement('div');
+    down.className = 'barDown';
+
+    const pct = scoreToPct(score);
+
+    if(score > 0){
+      up.style.height = pct + '%';
+      down.style.height = '0%';
+    }else if(score < 0){
+      down.style.height = pct + '%';
+      up.style.height = '0%';
+    }else{
+      up.style.height = '0%';
+      down.style.height = '0%';
+    }
+
+    col.appendChild(mid);
+    col.appendChild(up);
+    col.appendChild(down);
+    colsEl.appendChild(col);
+
+    // 捲到最右（最新）
+    movesEl.scrollLeft = movesEl.scrollWidth;
+    movesEl.scrollTop = movesEl.scrollHeight;
+  }
+
+  function clearChart(){
+    initChart();
+  }
+
   function dirOf(c){ return c==='B'?1:-1; }
   function otherOf(c){ return c==='B'?'W':'B'; }
   function isAI(color){ return (color==='B' && aiBlack) || (color==='W' && aiWhite); }
-
-  function log(msg){ logEl.textContent = msg || ''; }
-
-  function appendMoveLine(line){
-    movesEl.textContent += (movesEl.textContent ? "\n" : "") + line;
-    movesEl.scrollTop = movesEl.scrollHeight;
-    const lines = movesEl.textContent.split("\n");
-    if(lines.length > 8000){
-      movesEl.textContent = lines.slice(lines.length - 6000).join("\n");
-    }
-  }
-
-  function fmtScore(v){
-    if(v === Infinity) return "Inf";
-    if(v === -Infinity) return "-Inf";
-    if(v >=  9e8) return `WIN(B)+${Math.round(v - WIN)}`;   // 黑必勝
-    if(v <= -9e8) return `WIN(W)${Math.round(v + WIN)}`;    // 白必勝（v 是負）
-    return String(Math.round(v));
-  }
 
   function updateTurnUI(){
     const dot = turnBadgeEl.querySelector('.dot');
@@ -336,7 +445,6 @@
 
   function deepCopyBoard(src){ return src.map(col => col.slice()); }
 
-  // 盤面 key（不含 depth）
   function posKey(b){
     let s = '';
     for(let y=1;y<=H;y++){
@@ -356,23 +464,18 @@
   function placeInitial(b = board){
     //const blacks=[[7,1],[8,2]];
     //const whites=[[7,2],[7,3],[8,1]];
-    //const blacks=[[1,1],[1,2],[2,2],[2,3]];
-    //const whites=[[2,1]];
     const blacks=[[1,1],[1,2],[1,3],[2,1],[2,2],[3,1]];
     const whites=[[12,1],[12,2],[12,3],[11,1],[11,2],[10,1]];
-
     blacks.forEach(([x,y])=>b[x][y]='B');
     whites.forEach(([x,y])=>b[x][y]='W');
   }
 
-  // ===== NOOP 和局（真實對局）=====
+  // ===== NOOP 和局 =====
   function resetNoopStreak(){ noopStreak = 0; }
 
   function bumpNoopStreakAndCheckDraw(showAlert = false){
     noopStreak++;
-    log(`NOOP累積：${noopStreak}/${DRAW_NOOP_N}`);
     if(noopStreak >= DRAW_NOOP_N){
-      appendMoveLine(`== 和局：連續 NOOP（淨變化=0）達 ${DRAW_NOOP_N} 次 ==`);
       if(showAlert) alert('和局！');
       return { over:true, draw:true };
     }
@@ -491,7 +594,7 @@
   }
   function playerHasPieces(color){ return playerHasPiecesOn(board, color); }
 
-  // ===== 終局判定（真實對局）=====
+  // ===== 終局判定 =====
   function checkGameOver(showAlert = false, moverColor = null){
     const bHas = playerHasPieces('B');
     const wHas = playerHasPieces('W');
@@ -583,7 +686,17 @@
     return blackScore - whiteScore;
   }
 
-  // ===== 模擬走子（帶 lastMover；changed=淨變化）=====
+  function currentEvalForChart(){
+    // NOOP 和局優先
+    if(noopStreak >= DRAW_NOOP_N) return 0;
+    const over = checkGameOver(false, lastMover);
+    if(over.over && !over.draw){
+      return (over.winner === 'B') ? WIN : -WIN;
+    }
+    return evaluateBoard(board);
+  }
+
+  // ===== 模擬走子（changed=淨變化）=====
   function simulateMoveFrom(b0, x, y, turnColor){
     if(b0[x][y] !== turnColor) return { ok:false };
 
@@ -671,7 +784,6 @@
     };
   }
 
-  // ✅ 允許 NOOP：不以 sim.changed 過濾
   function listLegalMoves(b, turnColor){
     const moves = [];
     for(let x=1;x<=W;x++){
@@ -684,7 +796,7 @@
     return moves;
   }
 
-  // ===== Alpha-Beta（✅ NOOP 和局納入評值：達門檻就回 0；TT key 納入 noopStreakAB）=====
+  // ===== Alpha-Beta（NOOP 和局=0；TT key 納入 noopStreakAB）=====
   const TT = new Map();
 
   function boardKey(b, turnColor, depth, lastMoverKey, noopStreakKey){
@@ -781,22 +893,6 @@
     return best;
   }
 
-  function logAllMoveScores(scoredMoves, chosen){
-    const side = (turn === 'B') ? '黑' : '白';
-    appendMoveLine(`== AI分析 ${side}回合 depth=${SEARCH_DEPTH} 候選=${scoredMoves.length} | NOOP=${noopStreak}/${DRAW_NOOP_N} ==`);
-    for(const m of scoredMoves){
-      const tag = (chosen && m.x===chosen.x && m.y===chosen.y) ? '  <=CHOSEN' : '';
-      const chg = m.changed ? 'chg' : 'NOOP';
-      const w   = m.winner ? ` winner=${m.winner}` : '';
-      const co  = m.carry ? ` carry=${m.carry}` : '';
-      const nd  = (m.nextNoop >= DRAW_NOOP_N) ? ' DRAW_BY_NOOP' : '';
-      appendMoveLine(
-        `  (${m.x},${m.y}) ${chg} nextNOOP=${m.nextNoop} immediate=${fmtScore(m.immediate)} minimax=${fmtScore(m.v)}${nd}${w}${co}${tag}`
-      );
-    }
-    appendMoveLine(`== end ==`);
-  }
-
   function pickBestAIMove(){
     TT.clear();
 
@@ -807,7 +903,6 @@
 
     const scored = [];
     for(const m of moves){
-      const immediate = evaluateBoard(m.sim.b);
       const nextNoop = m.sim.changed ? 0 : (noopStreak + 1);
 
       const v = alphabeta(
@@ -820,22 +915,11 @@
         nextNoop
       );
 
-      scored.push({
-        x: m.x, y: m.y,
-        immediate,
-        v,
-        changed: !!m.sim.changed,
-        nextNoop,
-        winner: m.sim.winner || null,
-        carry: m.sim.carriedOutOpponent || 0
-      });
+      scored.push({ x: m.x, y: m.y, v });
     }
 
     scored.sort((a,b) => isMax ? (b.v - a.v) : (a.v - b.v));
-    const best = scored[0];
-
-    logAllMoveScores(scored, best);
-    return { x: best.x, y: best.y, score: best.v };
+    return { x: scored[0].x, y: scored[0].y };
   }
 
   // ===== 走子（動畫版）=====
@@ -846,16 +930,12 @@
 
     isAnimating = true;
 
-    // ✅ 用盤面淨變化判 NOOP（與 simulateMoveFrom / AI 搜尋一致）
     const beforeKey = posKey(board);
-
     lastMover = turn;
 
     const above=countAllAbove(selected.x,selected.y);
     const moveAmount=Math.floor(POINTS_PER_TURN/(above+1));
-    log(`上方棋子數=${above}，移動量=${moveAmount}`);
 
-    // 動畫用：不再用 didMove 來判 NOOP
     for(let i=0;i<moveAmount;i++){
       if(moveUpStep(group)){
         render();
@@ -908,6 +988,7 @@
     // 先判斷終局
     const over1 = checkGameOver(false, lastMover);
     if(over1.over){
+      addBar(currentEvalForChart());
       render();
       await sleep(80);
       alert(`${over1.winner==='B'?'黑棋':'白棋'}勝利！`);
@@ -918,25 +999,24 @@
     const opponent = otherOf(turn);
     const carriedOutOpponent = (opponent==='B') ? carriedOut.B : carriedOut.W;
 
-    // 棋譜：記錄這手（含 PASS）
-    if(netChanged) appendMoveLine(`${turn==='B'?'黑':'白'}: (${selected.x},${selected.y})`);
-    else          appendMoveLine(`${turn==='B'?'黑':'白'}: PASS`);
-
     // ✅ NOOP streak（真實對局：以淨變化判定）
     if(!netChanged){
       const dr = bumpNoopStreakAndCheckDraw(true);
+      addBar(0); // NOOP 記一條（和局規則導向 0）
       if(dr.over){
         isAnimating = false;
         return;
       }
     } else {
       resetNoopStreak();
+      addBar(currentEvalForChart()); // 走完一手（含吃子/推進）後，記錄局勢
     }
 
     if(carriedOutOpponent > 0){
       await respawnAndDrop(opponent, carriedOutOpponent);
 
       const over2 = checkGameOver(false, lastMover);
+      addBar(currentEvalForChart());
       if(over2.over){
         render();
         await sleep(80);
@@ -958,7 +1038,6 @@
       selected = null;
       group = null;
       render();
-      log('此步無法造成任何淨變化 → PASS 換對方');
       isAnimating = false;
       await maybeTriggerAIMove();
       return;
@@ -981,7 +1060,6 @@
     if(over0.over) return;
 
     if(noopStreak >= DRAW_NOOP_N) return;
-
     if(!isAI(turn)) return;
 
     await sleep(AI_THINK_DELAY);
@@ -989,31 +1067,26 @@
 
     const over1 = checkGameOver(false, lastMover);
     if(over1.over) return;
-
     if(noopStreak >= DRAW_NOOP_N) return;
-
-    log(`AI 思考中（αβ 深度 ${SEARCH_DEPTH}）...`);
 
     const mv = pickBestAIMove();
 
     if(!mv){
       // 沒棋可走 => PASS（淨變化=0 => NOOP）
-      appendMoveLine(`${turn==='B'?'黑':'白'}: PASS`);
       lastMover = turn;
 
       const dr = bumpNoopStreakAndCheckDraw(true);
+      addBar(0);
       if(dr.over) return;
 
       turn = otherOf(turn);
       selected = null;
       group = null;
       render();
-      log('AI 缺乏有意義棋步 → PASS 換對方');
       await maybeTriggerAIMove();
       return;
     }
 
-    log(`AI 選擇 (${mv.x},${mv.y})，評分=${fmtScore(mv.score)}`);
     selected = {x: mv.x, y: mv.y};
     group = computeGroup(mv.x, mv.y);
     render();
@@ -1054,13 +1127,12 @@
   function setDepth(n){
     SEARCH_DEPTH = n;
     depthBadge.textContent = `深度：${n}`;
-    log(`搜索深度已設定為 ${n}`);
   }
   depthRange.addEventListener('input', e=> setDepth(Number(e.target.value)));
   setDepth(Number(depthRange.value));
 
   document.getElementById('btnClearMoves').onclick=()=>{
-    movesEl.textContent = '';
+    clearChart();
   };
 
   document.getElementById('btnReset').onclick=()=>{
@@ -1071,8 +1143,8 @@
     selected=null;
     group=null;
     isAnimating=false;
-    log('');
     resetNoopStreak();
+    clearChart();
     render();
     maybeTriggerAIMove();
   };
@@ -1083,6 +1155,8 @@
   applyMode(modeSel.value);
   render();
   resetNoopStreak();
+  initChart();
+  addBar(currentEvalForChart()); // 開局先放一條
 })();
 </script>
 
