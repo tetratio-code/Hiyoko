@@ -253,7 +253,7 @@
   </div>
 
   <div class="panel">
-    <div class="title">小雞棋v3.8</div>
+    <div class="title">小雞棋v3.9</div>
 
     <div class="row">
       <span id="turnBadge" class="badge"><span class="dot"></span><span id="turnText">回合</span></span>
@@ -799,9 +799,11 @@
     return best;
   }
   function alphabetaEx(b, turnColor, depth, alpha, beta, lastMoverAB, noopStreakAB){
+    const WIN_TH = 9e8;
+  
     // 和局（已解）
     if(noopStreakAB >= DRAW_NOOP_N){
-      return { v: 0, solved: true, terminalEval: 0 };
+      return { v: 0, terminalEval: 0 };
     }
   
     const blackHas = playerHasPiecesOn(b, 'B');
@@ -809,27 +811,26 @@
   
     // 終局（已解）：同時帶回「此終局盤面」的 evaluateBoard
     if(!blackHas && whiteHas){
-      return { v: (WIN + depth), solved: true, terminalEval: evaluateBoard(b) };
+      return { v: (WIN + depth), terminalEval: evaluateBoard(b) };   // 黑勝
     }
     if(!whiteHas && blackHas){
-      return { v: (-WIN - depth), solved: true, terminalEval: evaluateBoard(b) };
+      return { v: (-WIN - depth), terminalEval: evaluateBoard(b) };  // 白勝（黑敗）
     }
     if(!blackHas && !whiteHas){
       const v = (lastMoverAB === 'B') ? (WIN + depth) : (-WIN - depth);
-      return { v, solved: true, terminalEval: evaluateBoard(b) };
+      return { v, terminalEval: evaluateBoard(b) };
     }
   
     if(depth === 0){
       const e = evaluateBoard(b);
-      return { v: e, solved: false, terminalEval: null };
+      return { v: e, terminalEval: null };
     }
   
     const moves = listLegalMoves(b, turnColor);
   
-    // PASS（算 NOOP）：如果這條路最後解出 WIN/LOSS，要把 terminalEval 往上帶
+    // PASS：沒得走（算 NOOP）
     if(moves.length === 0){
-      const r = alphabetaEx(b, otherOf(turnColor), depth - 1, alpha, beta, turnColor, noopStreakAB + 1);
-      return r;
+      return alphabetaEx(b, otherOf(turnColor), depth - 1, alpha, beta, turnColor, noopStreakAB + 1);
     }
   
     const isMax = (turnColor === 'B');
@@ -837,9 +838,31 @@
     for(const m of moves) m.order = evaluateBoard(m.sim.b);
     moves.sort((a,b2) => isMax ? (b2.order - a.order) : (a.order - b2.order));
   
-    let best = isMax ? -Infinity : Infinity;
-    let bestSolved = false;
-    let bestTerminalEval = null;
+    let bestV = isMax ? -Infinity : Infinity;
+    let bestTE = null;
+  
+    function better(aV, aTE, bV, bTE){
+      // 回傳 true 代表 a 比 b 好
+      if(isMax){
+        if(aV > bV) return true;
+        if(aV < bV) return false;
+      }else{
+        if(aV < bV) return true;
+        if(aV > bV) return false;
+      }
+  
+      // v 相等：若已解 WIN/LOSS，就「永遠站在勝方」挑終局評值，避免 turn 造成跳動
+      if(Math.abs(aV) >= WIN_TH && Math.abs(bV) >= WIN_TH){
+        if(aV > 0){ // 黑勝：終局評值取最大（黑想要最好看的終局）
+          return (aTE ?? -Infinity) > (bTE ?? -Infinity);
+        }else if(aV < 0){ // 白勝：終局評值取最小（白想要最好看的終局 => 對黑最負）
+          return (aTE ?? Infinity) < (bTE ?? Infinity);
+        }
+      }
+  
+      // 非已解或沒有 terminalEval：就不特別 tie-break
+      return false;
+    }
   
     for(const m of moves){
       const nextNoop = m.sim.changed ? 0 : (noopStreakAB + 1);
@@ -854,28 +877,27 @@
         nextNoop
       );
   
-      const v = r.v;
+      const aV = r.v;
+      const aTE = r.terminalEval;
+  
+      if(bestTE === null && bestV === (isMax ? -Infinity : Infinity)){
+        bestV = aV;
+        bestTE = aTE;
+      }else if(better(aV, aTE, bestV, bestTE)){
+        bestV = aV;
+        bestTE = aTE;
+      }
   
       if(isMax){
-        if(v > best){
-          best = v;
-          bestSolved = r.solved;
-          bestTerminalEval = r.terminalEval;
-        }
-        alpha = Math.max(alpha, best);
+        alpha = Math.max(alpha, bestV);
         if(alpha >= beta) break;
       }else{
-        if(v < best){
-          best = v;
-          bestSolved = r.solved;
-          bestTerminalEval = r.terminalEval;
-        }
-        beta = Math.min(beta, best);
+        beta = Math.min(beta, bestV);
         if(alpha >= beta) break;
       }
     }
   
-    return { v: best, solved: bestSolved, terminalEval: bestTerminalEval };
+    return { v: bestV, terminalEval: bestTE };
   }
 
   // ===== ✅ 每步都畫 + 白少算一步（只影響畫圖，不影響 AI 選步深度）=====
